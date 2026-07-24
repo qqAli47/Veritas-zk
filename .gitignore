@@ -178,3 +178,6 @@ cache/
 *.r1cs
 *.sym
 *_js/
+
+# Circuit build outputs
+build/
