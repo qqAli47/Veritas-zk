@@ -22,5 +22,28 @@ mkdir circuits contracts frontend scripts tests docs
 npm run test
 ```
 
+
 Security: never commit `.env`, `.zkey`, `.wtns`, or private keys. Use `.gitignore` and CI artifacts for built circuit outputs.
+
+## Running the Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Opens at http://localhost:5173
+```
+
+The frontend is a Vite + React app. On first run:
+1. **Connect your wallet** — click "Connect Wallet" to link MetaMask
+2. **Prove your age** — enter your birth year and a secret salt, then generate a ZK proof
+3. **Access restricted content** — after successful verification, view the gated area
+
+### Environment Variables
+
+Copy `frontend/.env.example` to `frontend/.env` and fill in contract addresses after deployment:
+```
+VITE_CONTRACT_ADDRESS=0x...    # CredentialRegistry address
+VITE_VERIFIER_ADDRESS=0x...    # Verifier address
+```
 
