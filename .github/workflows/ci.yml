@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'issue/**']
+  pull_request:
+    branches: [main]
+
+env:
+  CIRCOM_VERSION: v2.2.3
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+
+  build-and-test:
+    name: Circuit, contracts and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # Use the prebuilt release rather than `cargo install circom`, which
+      # takes about ten minutes from source.
+      - name: Install circom
+        run: |
+          curl -sSL -o /usr/local/bin/circom \
+            "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
+          chmod +x /usr/local/bin/circom
+          circom --version
+
+      # The Hermez transcript is a fixed, content-addressable file, so it
+      # caches perfectly. Never generate a ceremony in CI: `powersoftau
+      # contribute` takes entropy and is therefore non-deterministic.
+      - name: Cache Powers of Tau
+        uses: actions/cache@v4
+        with:
+          path: .ptau-cache
+          key: ptau-hez-bn128-12-v1
+
+      - name: Build circuit and generate the verifier
+        run: npm run zk:build
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run tests
+        run: npx hardhat test
+
+      # Turns the roadmap's "< 300,000 gas" from prose into an enforced
+      # invariant. tests/Gas.test.js asserts it; this surfaces the numbers.
+      - name: Gas report
+        run: REPORT_GAS=true GAS_OUT=docs/gas-report.txt npx hardhat test
+
+      # The committed verifier must correspond to the committed circuit.
+      # Drift here would otherwise show up as an unexplained on-chain revert.
+      - name: Verifier is in sync with the circuit
+        run: |
+          npx snarkjs zkey export solidityverifier \
+            build/attribute_check_final.zkey /tmp/Verifier.sol
+          # Compare only the mathematical content: the generated file embeds
+          # the verification key, which is deterministic for a given circuit,
+          # while our header comments and pragma pin are not in the raw output.
+          grep -oE '0x[0-9a-f]{16,}' contracts/Groth16Verifier.sol | sort > /tmp/committed.txt
+          grep -oE '0x[0-9a-f]{16,}' /tmp/Verifier.sol | sort > /tmp/fresh.txt
+          if ! diff -q /tmp/committed.txt /tmp/fresh.txt; then
+            echo "::error::Groth16Verifier.sol does not match the circuit. Run 'npm run zk:build'."
+            exit 1
+          fi
+
+      - name: Verify the browser proving path
+        run: node scripts/zk/verify-browser-path.mjs
+
+      - name: Local end-to-end run
+        run: |
+          npx hardhat node > /tmp/node.log 2>&1 &
+          # Poll rather than sleeping a fixed amount: the node is usually up in
+          # a second or two, but a cold runner can take much longer.
+          for i in $(seq 1 60); do
+            if curl -s -X POST -H 'Content-Type: application/json' \
+                 --data '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' \
+                 http://127.0.0.1:8545 > /dev/null 2>&1; then
+              echo "node ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+          npx hardhat run scripts/deploy.js --network localhost
+          npx hardhat run scripts/demo.js --network localhost
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gas-report
+          path: docs/gas-report.txt
+          retention-days: 14
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          # Two lockfiles means two cache entries; without this the frontend
+          # dependencies are never cached.
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+
+      # The build imports src/zk/signals.generated.json, which zk:build emits.
+      # Provide a placeholder so the frontend can be built without the full
+      # circuit toolchain.
+      - name: Ensure the signal manifest exists
+        run: |
+          if [ ! -f frontend/src/zk/signals.generated.json ]; then
+            cp circuits/public_signals.json frontend/src/zk/signals.generated.json
+          fi
+
+      - run: npm run --prefix frontend build
+        env:
+          VITE_CORE_ADDRESS: '0x0000000000000000000000000000000000000001'
+          VITE_REGISTRY_ADDRESS: '0x0000000000000000000000000000000000000002'
+          VITE_VERIFIER_ADDRESS: '0x0000000000000000000000000000000000000003'
+          VITE_GATED_ADDRESS: '0x0000000000000000000000000000000000000004'
+          VITE_CHAIN_ID: '11155111'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7

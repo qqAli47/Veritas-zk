@@ -1,66 +1,115 @@
-import React from 'react';
-import ConnectWallet from '../components/ConnectWallet.jsx';
-import { navigate } from '../utils/router.js';
+import { Link } from 'react-router-dom';
+import { useWallet } from '../providers/WalletProvider.jsx';
 
-function HomePage({ wallet }) {
+const ROLES = [
+  {
+    to: '/issuer',
+    icon: '🏛',
+    role: 'Authority',
+    title: 'Issue a credential',
+    body: 'Stand in for a government registry: vouch for a birth year by publishing a commitment.',
+  },
+  {
+    to: '/prove',
+    icon: '🧑',
+    role: 'Citizen',
+    title: 'Prove your age',
+    body: 'Generate a zero-knowledge proof in your browser and submit it for verification.',
+  },
+  {
+    to: '/restricted',
+    icon: '🏪',
+    role: 'Business',
+    title: 'Gated content',
+    body: 'See an age-restricted resource that trusts the chain, not the interface.',
+  },
+];
+
+export default function HomePage() {
+  const { isConnected, connect, status, error, hasWallet } = useWallet();
+
   return (
-    <div className="page">
-      <div className="card fade-in">
+    <div className="page page-wide">
+      <div className="card card-wide fade-in">
         <div className="card-header">
           <h1 className="logo">Veritas</h1>
           <p className="tagline">Privacy-Preserving Age Verification</p>
           <p className="description">
-            Prove you meet the age requirement without revealing your birth date.
-            Powered by zero-knowledge proofs on Ethereum.
+            Prove you are old enough — without revealing when you were born, who you are, or
+            anything else. A zero-knowledge proof, generated on your device and checked by a smart
+            contract.
           </p>
         </div>
 
         <div className="divider" />
 
-        <ConnectWallet
-          address={wallet.address}
-          isConnected={wallet.isConnected}
-          connect={wallet.connect}
-          disconnect={wallet.disconnect}
-          error={wallet.error}
-        />
-
-        {wallet.isConnected && (
-          <button
-            className="btn btn-secondary"
-            onClick={() => navigate('#/prove')}
-            style={{ marginTop: '1rem' }}
-          >
-            Prove Your Age →
-          </button>
+        {!isConnected && (
+          <>
+            <button
+              type="button"
+              className="btn btn-primary btn-full"
+              onClick={connect}
+              disabled={!hasWallet || status === 'connecting'}
+            >
+              {status === 'connecting' ? 'Connecting…' : 'Connect Wallet'}
+            </button>
+            {!hasWallet && (
+              <div className="metamask-error">
+                No wallet detected. Install MetaMask to try the live demo — or read{' '}
+                <Link to="/how-it-works">How it works</Link>, which needs no wallet.
+              </div>
+            )}
+            {error && <p className="error-msg">{error}</p>}
+          </>
         )}
+
+        <div className="role-grid">
+          {ROLES.map((r) => (
+            <Link key={r.to} to={r.to} className="role-card">
+              <span className="role-icon" aria-hidden="true">
+                {r.icon}
+              </span>
+              <span className="role-tag">{r.role}</span>
+              <strong>{r.title}</strong>
+              <p>{r.body}</p>
+            </Link>
+          ))}
+        </div>
 
         <div className="home-features">
           <div className="feature-item">
-            <span className="feature-icon">🔐</span>
+            <span className="feature-icon" aria-hidden="true">
+              🔐
+            </span>
             <div>
-              <strong>Private</strong>
-              <p>Your birth year never leaves your device</p>
+              <strong>Private by construction</strong>
+              <p>Your birth year never leaves the browser — not encrypted, simply never sent.</p>
             </div>
           </div>
           <div className="feature-item">
-            <span className="feature-icon">⚡</span>
+            <span className="feature-icon" aria-hidden="true">
+              ⚡
+            </span>
             <div>
               <strong>Fast</strong>
-              <p>Generate a proof in seconds</p>
+              <p>A 761-constraint circuit proves in about a second on a laptop.</p>
             </div>
           </div>
           <div className="feature-item">
-            <span className="feature-icon">⛓</span>
+            <span className="feature-icon" aria-hidden="true">
+              ⛓
+            </span>
             <div>
-              <strong>On-Chain</strong>
-              <p>Verified by smart contracts</p>
+              <strong>Enforced on-chain</strong>
+              <p>Verification and access control are contract logic, not interface logic.</p>
             </div>
           </div>
         </div>
+
+        <Link to="/how-it-works" className="btn btn-outline btn-full">
+          How it works →
+        </Link>
       </div>
     </div>
   );
 }
-
-export default HomePage;

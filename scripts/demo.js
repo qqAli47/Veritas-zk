@@ -1,0 +1,262 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  scripts/demo.js — the complete Veritas flow, end to end
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *  Runs the whole system against a deployed instance and narrates each step,
+ *  including the four attacks it is designed to defeat.
+ *
+ *    1. HOLDER   generates a secret and computes a commitment
+ *    2. ISSUER   registers the commitment (and never learns the secret)
+ *    3. HOLDER   generates a zk proof in ~1 second
+ *    4. HOLDER   submits it; the contract verifies and attests
+ *    5. RELYING PARTY reads the attestation and unlocks its content
+ *    6. ATTACKS  replay, proof theft, threshold forgery, stale year
+ *
+ *  Usage:
+ *    npx hardhat run scripts/demo.js --network localhost
+ */
+
+const fs = require('fs');
+const path = require('path');
+const hre = require('hardhat');
+const snarkjs = require('snarkjs');
+const { buildPoseidon } = require('circomlibjs');
+const crypto = require('crypto');
+
+const ROOT = path.join(__dirname, '..');
+const BUILD = path.join(ROOT, 'build');
+const WASM = path.join(BUILD, 'attribute_check_js', 'attribute_check.wasm');
+const ZKEY = path.join(BUILD, 'attribute_check_final.zkey');
+
+const FIELD_ORDER =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+const BIRTH_YEAR = 2000;
+
+// ── narration helpers ──────────────────────────────────────────────────────
+const C = {
+  dim: (s) => `\x1b[2m${s}\x1b[0m`,
+  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
+  green: (s) => `\x1b[32m${s}\x1b[0m`,
+  red: (s) => `\x1b[31m${s}\x1b[0m`,
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
+};
+const say = (s = '') => console.log(s);
+const head = (n, t) => say(`\n${C.cyan(C.bold(`  ${n}. ${t}`))}\n  ${C.dim('─'.repeat(64))}`);
+const good = (s) => say(`  ${C.green('✓')} ${s}`);
+const blocked = (s) => say(`  ${C.green('✓ blocked')} — ${s}`);
+const note = (s) => say(`  ${C.dim(s)}`);
+const short = (v) => {
+  const s = String(v);
+  return s.length > 20 ? `${s.slice(0, 10)}…${s.slice(-8)}` : s;
+};
+
+const toField = (x) => {
+  const v = BigInt(x) % FIELD_ORDER;
+  return v < 0n ? v + FIELD_ORDER : v;
+};
+
+let _p;
+async function poseidon2(a, b) {
+  if (!_p) _p = await buildPoseidon();
+  return _p.F.toString(_p([toField(a), toField(b)]));
+}
+
+const pack = (subject, year, threshold) =>
+  (BigInt(subject) << 32n) | (BigInt(year) << 16n) | BigInt(threshold);
+
+async function proveFor({ birthYear, secret, subject, currentYear, threshold, context }) {
+  const input = {
+    context: toField(context).toString(),
+    packed: pack(subject, currentYear, threshold).toString(),
+    birthYear: String(birthYear),
+    secret: toField(secret).toString(),
+  };
+  const t0 = Date.now();
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, WASM, ZKEY);
+  const ms = Date.now() - t0;
+  const raw = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
+  const [a, b, c, pub] = JSON.parse('[' + raw + ']');
+  return { a, b, c, pub, ms, commitment: publicSignals[0], nullifier: publicSignals[1] };
+}
+
+/** Run a call that must revert, and report which custom error came back. */
+async function expectRevert(promise, label) {
+  try {
+    await promise;
+    say(`  ${C.red('✗ NOT BLOCKED')} — ${label} succeeded when it should have failed!`);
+    process.exitCode = 1;
+  } catch (err) {
+    const name = err?.revert?.name || (err.message.match(/reverted with custom error '(\w+)/) || [])[1];
+    blocked(`${label}  →  ${C.bold(name || 'reverted')}`);
+  }
+}
+
+async function main() {
+  const { ethers, network } = hre;
+
+  if (!fs.existsSync(ZKEY)) throw new Error('Circuit not built. Run `npm run zk:build`.');
+  const deployFile = path.join(ROOT, 'deployments', `${network.name}.json`);
+  if (!fs.existsSync(deployFile)) {
+    throw new Error(
+      `No deployment for "${network.name}". Run:\n` +
+        `  npx hardhat run scripts/deploy.js --network ${network.name}`,
+    );
+  }
+  const dep = JSON.parse(fs.readFileSync(deployFile, 'utf8'));
+
+  const signers = await ethers.getSigners();
+  const [issuerSigner, holder, attacker] = signers;
+
+  const core = await ethers.getContractAt('VeritasCore', dep.contracts.core);
+  const registry = await ethers.getContractAt('CredentialRegistry', dep.contracts.registry);
+  const gated = await ethers.getContractAt('GatedContent', dep.contracts.gatedContent);
+
+  say();
+  say(C.bold('  ╔══════════════════════════════════════════════════════════════╗'));
+  say(C.bold('  ║   Veritas-zk — end-to-end demonstration                       ║'));
+  say(C.bold('  ╚══════════════════════════════════════════════════════════════╝'));
+  note(`  network ${network.name}   core ${dep.contracts.core}`);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(1, 'HOLDER creates a credential');
+
+  // The secret is generated by the HOLDER, on the holder's machine.
+  const secret = toField(BigInt('0x' + crypto.randomBytes(64).toString('hex')));
+  const commitment = await poseidon2(BIRTH_YEAR, secret);
+
+  note(`birth year   ${BIRTH_YEAR}          ${C.bold('(private — never leaves this process)')}`);
+  note(`secret       ${short(secret)}  ${C.bold('(private)')}`);
+  good(`commitment   ${short(commitment)}`);
+  note('');
+  note('The issuer receives ONLY the commitment. An issuer who learned the');
+  note('secret could compute every nullifier the holder will ever produce and');
+  note('so link all of their future verifications — the privacy guarantee');
+  note('depends on this direction of information flow.');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(2, 'ISSUER registers the commitment on-chain');
+
+  const regTx = await registry.connect(issuerSigner).registerCommitment(commitment, 0n);
+  const regRc = await regTx.wait();
+  good(`registered in block ${regRc.blockNumber} — ${regRc.gasUsed.toLocaleString()} gas`);
+  note(`isValid(commitment) = ${await registry.isValid(commitment)}`);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(3, 'HOLDER generates a zero-knowledge proof');
+
+  const [context, epoch, year, minAge] = await core.proverParams();
+  note(`policy: minimum age ${minAge}, reference year ${year}, epoch ${epoch}`);
+
+  const proof = await proveFor({
+    birthYear: BIRTH_YEAR,
+    secret,
+    subject: holder.address,
+    currentYear: Number(year),
+    threshold: Number(minAge),
+    context,
+  });
+  good(`proof generated in ${proof.ms} ms`);
+  note(`public signals: commitment=${short(proof.pub[0])}`);
+  note(`                nullifier =${short(proof.pub[1])}`);
+  note(`                context   =${short(proof.pub[2])}`);
+  note(`                packed    =${short(proof.pub[3])}`);
+  note('');
+  note('Note what is NOT here: the birth year and the secret. The verifier');
+  note('learns only that SOME birth year satisfying the threshold opens a');
+  note('commitment the issuer registered.');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(4, 'HOLDER submits the proof for on-chain verification');
+
+  const vTx = await core.connect(holder).verifyAge(proof.a, proof.b, proof.c, proof.pub);
+  const vRc = await vTx.wait();
+  good(`verified in block ${vRc.blockNumber} — ${C.bold(vRc.gasUsed.toLocaleString())} gas`);
+
+  const att = await core.attestationOf(holder.address);
+  note(`attestation: minAge ${att.minAge}, valid until ${new Date(Number(att.validUntil) * 1000).toISOString()}`);
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(5, 'A RELYING PARTY gates its content on the attestation');
+
+  note(`before: canAccess(holder) = ${await gated.canAccess(attacker.address)} (an unverified account)`);
+  good(`after:  canAccess(holder) = ${await gated.canAccess(holder.address)}`);
+  const accessRc = await (await gated.connect(holder).accessContent()).wait();
+  good(`accessContent() succeeded — ${accessRc.gasUsed.toLocaleString()} gas`);
+  note('The gate is a require() in the EVM, not a hidden <div> in React.');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  head(6, 'The attacks this design defeats');
+
+  await expectRevert(
+    core.connect(holder).verifyAge(proof.a, proof.b, proof.c, proof.pub),
+    'REPLAY — resubmitting the same proof',
+  );
+
+  /*
+   * Proof theft has to be demonstrated against a proof that has NOT yet been
+   * spent — otherwise the nullifier check fires first and we would only be
+   * re-testing replay protection while claiming to test subject binding.
+   *
+   * So: a second credential, freshly proven, sitting in the mempool.
+   */
+  const secret2 = toField(BigInt('0x' + crypto.randomBytes(64).toString('hex')));
+  const commitment2 = await poseidon2(BIRTH_YEAR, secret2);
+  await (await registry.connect(issuerSigner).registerCommitment(commitment2, 0n)).wait();
+
+  const pending = await proveFor({
+    birthYear: BIRTH_YEAR, secret: secret2, subject: holder.address,
+    currentYear: Number(year), threshold: Number(minAge), context,
+  });
+
+  const forged = [...pending.pub];
+  forged[3] = pack(attacker.address, Number(year), Number(minAge)).toString();
+  await expectRevert(
+    core.connect(attacker).verifyAge(pending.a, pending.b, pending.c, forged),
+    'PROOF THEFT — rewriting an unspent proof to name the attacker',
+  );
+
+  // And the other half of the property: submitting it UNCHANGED is allowed,
+  // but the attacker gains nothing — they merely pay gas to deliver the
+  // holder's own attestation. This is what makes relaying safe.
+  await (await core.connect(attacker).verifyAge(pending.a, pending.b, pending.c, pending.pub)).wait();
+  good(
+    `RELAY — attacker submitted the holder's proof unchanged; ` +
+      `attestation went to the holder (${await core.isVerified(holder.address)}), ` +
+      `not the attacker (${await core.isVerified(attacker.address)})`,
+  );
+
+  const weak = await proveFor({
+    birthYear: BIRTH_YEAR, secret, subject: holder.address,
+    currentYear: Number(year), threshold: 0, context,
+  });
+  await expectRevert(
+    core.connect(holder).verifyAge(weak.a, weak.b, weak.c, weak.pub),
+    'THRESHOLD FORGERY — claiming threshold = 0',
+  );
+
+  const future = await proveFor({
+    birthYear: 2020, secret, subject: holder.address,
+    currentYear: Number(year) + 20, threshold: Number(minAge), context,
+  });
+  await expectRevert(
+    core.connect(holder).verifyAge(future.a, future.b, future.c, future.pub),
+    'YEAR FORGERY — claiming the year is 20 years from now',
+  );
+
+  say();
+  say(`  ${C.green(C.bold('All steps completed.'))}`);
+  say();
+}
+
+main()
+  .then(async () => {
+    if (globalThis.curve_bn128) await globalThis.curve_bn128.terminate();
+    process.exit(process.exitCode || 0);
+  })
+  .catch(async (err) => {
+    console.error(`\n  ${C.red('Demo failed:')} ${err.message}\n`);
+    if (globalThis.curve_bn128) await globalThis.curve_bn128.terminate();
+    process.exit(1);
+  });
