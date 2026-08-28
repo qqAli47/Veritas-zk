@@ -58,31 +58,52 @@ Full analysis in [`docs/threat-model.md`](docs/threat-model.md).
 
 ## Quick start
 
-Requires Node 20+ and the [circom 2 compiler](https://docs.circom.io/getting-started/installation/) on your `PATH`.
+**Windows:** double-click **`run.bat`**
+**macOS / Linux:** `./run.sh`
+
+That is the whole thing. It checks your toolchain, installs dependencies,
+builds the circuit, runs the trusted setup, deploys the contracts, starts a
+local blockchain and opens the app — and it is safe to re-run, skipping
+whatever is already done.
+
+| Command | What it does |
+|---|---|
+| `run.bat` / `./run.sh` | Set everything up, then start the node and the app |
+| `run.bat setup` | Install and build only |
+| `run.bat test` | Run the 85-test suite |
+| `run.bat demo` | Narrated end-to-end run, including four attacks being blocked |
+| `run.bat clean` | Delete build output and dependencies |
+
+> **New to zero-knowledge proofs?** [`WALKTHROUGH.md`](WALKTHROUGH.md) explains
+> the entire system from first principles, with hands-on exercises.
+
+### Doing it by hand
+
+Requires Node 18+ and the [circom **2**
+compiler](https://docs.circom.io/getting-started/installation/) on your `PATH`.
+
+> Do **not** run `npm install -g circom` — that installs v0.5.46, the old
+> pre-2.0 compiler, which cannot build this circuit. circom 2 is a standalone
+> binary from [GitHub releases](https://github.com/iden3/circom/releases/latest).
+> `run.bat` / `run.sh` will fetch it for you.
 
 ```bash
-git clone <repo> && cd veritas
 npm install
-npm run zk:build      # compile the circuit, run the trusted setup, generate the verifier
+npm run zk:build      # compile the circuit, trusted setup, generate the verifier
 npm test              # 85 tests
+
+# terminal 1
+npx hardhat node
+# terminal 2
+npm run deploy:local  # deploys 4 contracts, writes frontend/.env.local
+npm run demo:local    # narrates the full flow, then 4 attacks failing
+
+cd frontend && npm install && npm run dev
 ```
 
 `zk:build` downloads the Hermez Powers-of-Tau transcript (~5 MB) on first run
 and caches it. If the download fails it falls back to a local ceremony and says
 loudly that the result is development-only.
-
-## Run the whole thing locally
-
-```bash
-# terminal 1
-npx hardhat node
-
-# terminal 2
-npm run deploy:local      # deploys 4 contracts, writes frontend/.env.local
-npm run demo:local        # narrates the full flow, then demonstrates 4 attacks failing
-
-cd frontend && npm install && npm run dev
-```
 
 Then open <http://localhost:5173> and import a Hardhat account into MetaMask.
 Account #0 is the issuer.
@@ -115,6 +136,8 @@ produce a permanently dead deployment.
 ## Project structure
 
 ```
+run.bat / run.sh             one-command setup and launch
+WALKTHROUGH.md               a from-scratch explanation for new developers
 circuits/
   attribute_check.circom     the circuit — 761 constraints
   public_signals.json        generated: the frozen public-signal layout
