@@ -43,10 +43,12 @@ interface ICredentialRegistry {
  *      no birth year, no commitment, no link to an identity.
  */
 interface IVeritasAttestor {
+    /// @dev 64 + 16 + 64 + 64 = 208 bits => still one storage slot.
     struct Attestation {
         uint64 validUntil; // unix seconds; 0 = never attested
         uint16 minAge; // the threshold that was actually proven
         uint64 epoch; // the verification epoch it was issued in
+        uint64 regions; // the region allowlist the holder proved membership in
     }
 
     /// @notice True when `user` holds an unexpired attestation.
@@ -56,4 +58,34 @@ interface IVeritasAttestor {
     function isVerifiedAtLeast(address user, uint16 minAge) external view returns (bool);
 
     function attestationOf(address user) external view returns (Attestation memory);
+
+    /**
+     * @notice True when `user` holds an unexpired attestation whose proven
+     *         region set is a SUBSET of `required`.
+     *
+     * @dev Read the semantics carefully, because the name is easy to
+     *      misinterpret. The holder proved membership in some set S. A relying
+     *      party demanding T is satisfied only when S is a subset of T: if the
+     *      holder is somewhere in S, and every element of S lies in T, then the
+     *      holder is in T. When S is not a subset of T this returns false even
+     *      though the holder MIGHT be in T — a false negative, never a false
+     *      positive. Failing closed is the only safe direction.
+     *
+     *      Because VeritasCore pins the mask by equality, S is always the
+     *      deployment's policy at the time of verification. So this really
+     *      answers "was this user verified under a region policy at least as
+     *      tight as mine", not "is this user in France".
+     *
+     *      A resource demanding a single region is therefore satisfied only by
+     *      a proof made against that same single-region policy — proving
+     *      membership in 27 EU states does not establish presence in France.
+     */
+    function isVerifiedInRegions(address user, uint64 required) external view returns (bool);
+
+    /// @notice `isVerifiedAtLeast` and `isVerifiedInRegions` in one call.
+    function isVerifiedAtLeastInRegions(
+        address user,
+        uint16 minAge,
+        uint64 required
+    ) external view returns (bool);
 }

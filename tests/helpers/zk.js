@@ -44,7 +44,26 @@ function skipUnlessBuilt(ctx) {
 const readManifest = () => JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
 const readVkey = () => JSON.parse(fs.readFileSync(VKEY, 'utf8'));
 
-// ── Field arithmetic (mirrors scripts/zk/credential.mjs) ────────────────────
+/*
+ * ── Why this file keeps its OWN implementation ──────────────────────────────
+ *
+ * scripts/demo.js and scripts/zk/verify-browser-path.mjs were both changed to
+ * import the canonical helpers from scripts/zk/credential.mjs, because a second
+ * copy in a *script* buys nothing and can silently drift.
+ *
+ * This file is different, and deliberately still has its own. A test oracle
+ * that merely re-exports the code under test cannot detect a bug in that code —
+ * it would agree with it by construction. Keeping an independent
+ * reimplementation here, and pinning the two together in tests/parity.test.js,
+ * is what turns "they agree" into evidence rather than a tautology.
+ *
+ * Three implementations exist in total, all pinned by parity.test.js:
+ *   1. scripts/zk/credential.mjs   canonical, Node
+ *   2. frontend/src/zk/field.js    browser mirror (keeps the bundle at 683 KB)
+ *   3. this file                   independent test oracle
+ */
+
+// ── Field arithmetic ────────────────────────────────────────────────────────
 const FIELD_ORDER =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -54,21 +73,47 @@ const toField = (x) => {
 };
 
 let _poseidon;
-async function poseidon2(a, b) {
+async function poseidonN(inputs) {
   if (!_poseidon) {
     const { buildPoseidon } = require('circomlibjs');
     _poseidon = await buildPoseidon();
   }
-  return _poseidon.F.toString(_poseidon([toField(a), toField(b)]));
+  return _poseidon.F.toString(_poseidon(inputs.map(toField)));
 }
 
-const commitmentOf = (birthYear, secret) => poseidon2(birthYear, secret);
+const poseidon2 = (a, b) => poseidonN([a, b]);
+const poseidon3 = (a, b, c) => poseidonN([a, b, c]);
+
+const commitmentOf = (birthYear, regionCode, secret) =>
+  poseidon3(birthYear, regionCode, secret);
 const nullifierOf = (secret, context) => poseidon2(secret, context);
 
-/** subject<<32 | currentYear<<16 | threshold */
-function pack(subject, currentYear, threshold) {
-  return (BigInt(subject) << 32n) | (BigInt(currentYear) << 16n) | BigInt(threshold);
+/** Where the region allowlist starts inside the packed word. */
+const MASK_OFFSET = 192n;
+
+/** regionMask<<192 | subject<<32 | currentYear<<16 | threshold */
+function pack(subject, currentYear, threshold, regionMask = 0n) {
+  return (
+    (BigInt(regionMask) << MASK_OFFSET) |
+    (BigInt(subject) << 32n) |
+    (BigInt(currentYear) << 16n) |
+    BigInt(threshold)
+  );
 }
+
+/** Inverse of pack(). */
+function unpack(packed) {
+  const p = BigInt(packed);
+  return {
+    threshold: Number(p & 0xffffn),
+    currentYear: Number((p >> 16n) & 0xffffn),
+    subject: '0x' + ((p >> 32n) & ((1n << 160n) - 1n)).toString(16).padStart(40, '0'),
+    regionMask: p >> MASK_OFFSET,
+  };
+}
+
+/** Build an allowlist mask from region bit indices. */
+const maskOfBits = (bits) => bits.reduce((m, b) => m | (1n << BigInt(b)), 0n);
 
 /**
  * Recompute VeritasCore.contextFor(epoch) off-chain.
@@ -77,7 +122,7 @@ function pack(subject, currentYear, threshold) {
 function contextFor(ethers, chainId, coreAddress, epoch) {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
     ['bytes32', 'uint256', 'address', 'uint64'],
-    [ethers.id('Veritas-zk/AgeAttestation/v1'), chainId, coreAddress, epoch],
+    [ethers.id('Veritas-zk/AttributeAttestation/v2'), chainId, coreAddress, epoch],
   );
   return BigInt(ethers.keccak256(encoded)) >> 8n;
 }
@@ -86,11 +131,21 @@ function contextFor(ethers, chainId, coreAddress, epoch) {
  * Generate a real proof.
  * @returns {{proof, publicSignals, calldata, commitment, nullifier}}
  */
-async function prove({ birthYear, secret, subject, currentYear, threshold, context }) {
+async function prove({
+  birthYear,
+  regionCode,
+  secret,
+  subject,
+  currentYear,
+  threshold,
+  context,
+  regionMask,
+}) {
   const input = {
     context: toField(context).toString(),
-    packed: pack(subject, currentYear, threshold).toString(),
+    packed: pack(subject, currentYear, threshold, regionMask).toString(),
     birthYear: String(birthYear),
+    regionCode: String(regionCode),
     secret: toField(secret).toString(),
   };
 
@@ -158,9 +213,13 @@ module.exports = {
   readVkey,
   toField,
   poseidon2,
+  poseidon3,
   commitmentOf,
   nullifierOf,
   pack,
+  unpack,
+  maskOfBits,
+  MASK_OFFSET,
   contextFor,
   prove,
   toCalldata,

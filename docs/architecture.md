@@ -89,11 +89,12 @@ than 236,000.
 graph LR
     subgraph priv["Private inputs"]
         BY[birthYear]
+        RC[regionCode]
         S[secret]
     end
     subgraph pub["Public inputs"]
         CTX[context]
-        PK["packed<br/>subject‖year‖threshold"]
+        PK["packed<br/>subject‖year‖threshold‖regionMask"]
     end
     subgraph out["Public outputs"]
         CM[commitment]
@@ -101,13 +102,18 @@ graph LR
     end
 
     BY --> P1[Poseidon]
+    RC --> P1
     S --> P1 --> CM
     S --> P2[Poseidon]
     CTX --> P2 --> NF
 
-    PK --> N192["Num2Bits(192)<br/>range-check + bind"]
+    PK --> N192["Num2Bits(253)<br/>range-check + bind"]
     N192 --> YR[currentYear]
     N192 --> TH[threshold]
+    N192 --> MASK[regionMask]
+    RC --> DEC["Decoder<br/>one-hot"]
+    MASK --> MEM["member?"]
+    DEC --> MEM
 
     BY --> N16["Num2Bits(16)"]
     N16 --> AGE
@@ -116,8 +122,9 @@ graph LR
     TH --> GTE
 ```
 
-761 non-linear constraints, of which about 486 are the two Poseidon
-permutations. The full breakdown is in [gas-report.md](gas-report.md).
+965 non-linear constraints, of which about 507 are the two Poseidon
+permutations (one of arity 3 for the commitment, one of arity 2 for the
+nullifier) and ~123 the private set-membership check. The full breakdown is in [gas-report.md](gas-report.md).
 
 ## 4. Contracts
 
@@ -167,6 +174,7 @@ misconfigured, and removes a circular deployment dependency.
 | Value | Where it lives | Who can see it |
 |---|---|---|
 | `birthYear` | Browser memory only | The holder |
+| `regionCode` | Browser memory only | The holder — and the issuer, who attested it |
 | `secret` | Browser memory only, generated locally | The holder alone — **not the issuer** |
 | Witness | Browser memory, discarded | Nobody |
 | `commitment` | On-chain, public | Everyone (a salted hash) |

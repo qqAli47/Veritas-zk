@@ -39,6 +39,22 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
     uint256 private constant PUB_CONTEXT = 2;
     uint256 private constant PUB_PACKED = 3;
 
+    /**
+     * @dev Layout of the packed public signal. These MUST match the circuit:
+     *      threshold(16) | currentYear(16) | subject(160) | regionMask(61).
+     *
+     *      PACKED_BITS is used in BOTH verifyAge and _preflight. Updating only
+     *      one of them would leave staticVerify rejecting every valid proof as
+     *      malformed — and because the frontend calls staticVerify before
+     *      opening the wallet, the app would be unusable while every on-chain
+     *      test still passed.
+     */
+    uint256 private constant PACKED_BITS = 253;
+    uint256 private constant MASK_OFFSET = 192;
+
+    /// @dev Width of the region allowlist. Must equal N_REGIONS in the circuit.
+    uint64 private constant N_REGIONS = 61;
+
     bytes32 public constant POLICY_ROLE = keccak256("VERITAS_POLICY_ROLE");
 
     /**
@@ -46,7 +62,7 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
      * @dev Also an emergency lever: were this ever changed, every outstanding
      *      proof would stop verifying at once.
      */
-    bytes32 public constant CONTEXT_TAG = keccak256("Veritas-zk/AgeAttestation/v1");
+    bytes32 public constant CONTEXT_TAG = keccak256("Veritas-zk/AttributeAttestation/v2");
 
     /**
      * @dev Mean Gregorian year in seconds (365.2425 days). Anchored at the
@@ -64,7 +80,9 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
     ICredentialRegistry public immutable registry;
 
     /**
-     * @dev 16 + 32 + 16 + 16 + 8 = 88 bits => one slot, one SLOAD per verification.
+     * @dev 16 + 32 + 16 + 16 + 8 + 64 = 152 bits => still one slot, still one
+     *      SLOAD per verification. Adding the region allowlist is therefore
+     *      free on the hot path.
      *
      *      `paused` lives here rather than in OpenZeppelin's Pausable for a
      *      concrete reason: Pausable keeps its flag in a slot of its own, so
@@ -79,6 +97,7 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         uint16 maxYearLag; //     how many years a proof's `currentYear` may trail the chain's
         uint16 yearOverride; //   0 = derive the year from block.timestamp
         bool paused; //           emergency stop
+        uint64 allowedRegions; // bitmask of permitted regions; bit i = regions.json bit i
     }
     Policy public policy;
 
@@ -105,6 +124,7 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
     error NullifierAlreadyUsed(uint256 nullifier);
     error InvalidProof();
     error BadPolicy();
+    error RegionMaskMismatch(uint64 proven, uint64 required);
     error EnforcedPause();
 
     event AgeVerified(
@@ -117,7 +137,13 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
     );
     event AttestationRevoked(address indexed subject, address indexed admin);
     event PausedSet(bool paused);
-    event PolicyUpdated(uint16 minAge, uint32 epochSeconds, uint16 maxYearLag, uint16 yearOverride);
+    event PolicyUpdated(
+        uint16 minAge,
+        uint32 epochSeconds,
+        uint16 maxYearLag,
+        uint16 yearOverride,
+        uint64 allowedRegions
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     constructor(
@@ -166,13 +192,20 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
     function proverParams()
         external
         view
-        returns (uint256 context, uint64 epoch, uint16 year, uint16 minAge)
+        returns (
+            uint256 context,
+            uint64 epoch,
+            uint16 year,
+            uint16 minAge,
+            uint64 allowedRegions
+        )
     {
         Policy memory p = policy;
         epoch = uint64(block.timestamp / p.epochSeconds);
         context = contextFor(epoch);
         year = _currentYear(p);
         minAge = p.minAge;
+        allowedRegions = p.allowedRegions;
     }
 
     function currentYear() external view returns (uint16) {
@@ -218,14 +251,14 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         // sake of one function.
 
         // ── Unpack and shape-check ───────────────────────────────────────
-        // The circuit already proved `packed < 2^192` via Num2Bits(192);
+        // The circuit already proved `packed < 2^253` via Num2Bits(253);
         // re-checking here means the casts below cannot silently truncate
         // even if a future circuit revision relaxed that bound.
         uint16 provenMinAge;
         uint64 epoch;
         {
             uint256 packed = pubSignals[PUB_PACKED];
-            if (packed >> 192 != 0) revert MalformedPublicInput();
+            if (packed >> PACKED_BITS != 0) revert MalformedPublicInput();
 
             subject = address(uint160(packed >> 32));
             if (subject == address(0)) revert ZeroSubject();
@@ -233,6 +266,19 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
 
             Policy memory p = policy;
             if (p.paused) revert EnforcedPause();
+
+            // Pin the region allowlist, exactly as the threshold and year are
+            // pinned. Equality rather than subset, deliberately: it forces
+            // every prover into the SAME anonymity set. Under a subset rule a
+            // malicious relying party could ask for a proof against a single
+            // region and learn the holder's location from a "zero-knowledge"
+            // flow. See docs/threat-model.md.
+            {
+                uint64 provenRegions = uint64(packed >> MASK_OFFSET);
+                if (provenRegions != p.allowedRegions) {
+                    revert RegionMaskMismatch(provenRegions, p.allowedRegions);
+                }
+            }
 
             // Pin the threshold. `>=` rather than `==`: proving you are over
             // 21 is a strictly stronger claim than proving you are over 18,
@@ -285,7 +331,12 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         _attestations[subject] = Attestation({
             validUntil: validUntil,
             minAge: provenMinAge,
-            epoch: epoch
+            epoch: epoch,
+            // Recomputed rather than carried down from the block above:
+            // verifyAge already sits at the EVM's 16-slot stack reach (see the
+            // scoping note at the top of this function), and a CALLDATALOAD +
+            // SHR is ~10 gas against the cost of another live local.
+            regions: uint64(pubSignals[PUB_PACKED] >> MASK_OFFSET)
         });
         // The attestation is credited to the subject named INSIDE the proof,
         // never to msg.sender. That is what makes a stolen proof worthless: a
@@ -327,7 +378,8 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         if (p.paused) return "PAUSED";
 
         uint256 packed = pubSignals[PUB_PACKED];
-        if (packed >> 192 != 0) return "MALFORMED_PACKED";
+        if (packed >> PACKED_BITS != 0) return "MALFORMED_PACKED";
+        if (uint64(packed >> MASK_OFFSET) != p.allowedRegions) return "REGION_MASK_STALE";
 
         if (address(uint160(packed >> 32)) == address(0)) return "ZERO_SUBJECT";
 
@@ -365,6 +417,40 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         return _attestations[user];
     }
 
+    /**
+     * @inheritdoc IVeritasAttestor
+     *
+     * @dev The liveness check is not optional and not merely tidiness. A
+     *      never-verified address has `regions == 0`, and the empty set is a
+     *      subset of EVERY set — `0 & ~required == 0` holds for all `required`.
+     *      Testing the subset relation alone would therefore return true for
+     *      every address that has never touched this system. The `regions != 0`
+     *      guard is redundant given the expiry check, but `revokeAttestation`
+     *      deletes the struct, and a future path that zeroed `regions` without
+     *      zeroing `validUntil` would silently re-open the hole.
+     */
+    function isVerifiedInRegions(address user, uint64 required) external view returns (bool) {
+        Attestation memory at = _attestations[user];
+        return
+            at.validUntil > block.timestamp &&
+            at.regions != 0 &&
+            at.regions & ~required == 0;
+    }
+
+    /// @inheritdoc IVeritasAttestor
+    function isVerifiedAtLeastInRegions(
+        address user,
+        uint16 minAge,
+        uint64 required
+    ) external view returns (bool) {
+        Attestation memory at = _attestations[user];
+        return
+            at.validUntil > block.timestamp &&
+            at.minAge >= minAge &&
+            at.regions != 0 &&
+            at.regions & ~required == 0;
+    }
+
     // ═════════════════════════════════════════════════════════════════════
     //  Administration
     // ═════════════════════════════════════════════════════════════════════
@@ -377,11 +463,21 @@ contract VeritasCore is AccessControl, IVeritasAttestor {
         // An epoch shorter than an hour would make proofs expire mid-flow;
         // a maxYearLag above 2 would let genuinely stale proofs through.
         if (p.minAge == 0 || p.epochSeconds < 1 hours || p.maxYearLag > 2) revert BadPolicy();
+
+        // An empty mask means no proof could ever satisfy the equality check.
+        if (p.allowedRegions == 0) revert BadPolicy();
+        // Bit 0 is the reserved invalid sentinel, so a credential whose
+        // regionCode defaulted to zero can never prove anything.
+        if (p.allowedRegions & 1 != 0) revert BadPolicy();
+        // The circuit caps the mask at N_REGIONS bits. Setting a bit above that
+        // would make the equality check unsatisfiable for EVERY prover — the
+        // deployment would brick, and the revert would give no clue why.
+        if (p.allowedRegions >> N_REGIONS != 0) revert BadPolicy();
         // Preserve the emergency stop across a policy update: an operator
         // editing the minimum age must not accidentally un-pause the system.
         p.paused = policy.paused;
         policy = p;
-        emit PolicyUpdated(p.minAge, p.epochSeconds, p.maxYearLag, p.yearOverride);
+        emit PolicyUpdated(p.minAge, p.epochSeconds, p.maxYearLag, p.yearOverride, p.allowedRegions);
     }
 
     /// @notice Emergency withdrawal of a single attestation.

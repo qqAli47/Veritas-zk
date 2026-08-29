@@ -4,6 +4,7 @@ import { useToast } from '../providers/ToastProvider.jsx';
 import { toCredentialFile } from '../providers/CredentialProvider.jsx';
 import { computeCommitment, warmPoseidon } from '../zk/poseidon.js';
 import { randomSecret, shorten } from '../zk/field.js';
+import { SELECTABLE_REGIONS, groupedRegions, regionByBit } from '../zk/regions.js';
 import { readRegistry, writeRegistry } from '../contracts/clients.js';
 import { decodeContractError } from '../contracts/errors.js';
 import { CONTRACTS, txUrl } from '../contracts/config.js';
@@ -35,6 +36,7 @@ export default function IssuerPage() {
   const toast = useToast();
 
   const [birthYear, setBirthYear] = useState('2000');
+  const [regionBit, setRegionBit] = useState(String(SELECTABLE_REGIONS[0].bit));
   const [secret, setSecret] = useState('');
   const [revealSecret, setRevealSecret] = useState(false);
   const [commitment, setCommitment] = useState(null);
@@ -76,7 +78,7 @@ export default function IssuerPage() {
     }
     (async () => {
       try {
-        const c = await computeCommitment(birthYear, secret);
+        const c = await computeCommitment(birthYear, regionBit, secret);
         if (!cancelled) setCommitment(c);
       } catch {
         if (!cancelled) setCommitment(null);
@@ -85,7 +87,7 @@ export default function IssuerPage() {
     return () => {
       cancelled = true;
     };
-  }, [birthYear, secret]);
+  }, [birthYear, regionBit, secret]);
 
   const generateSecret = useCallback(() => {
     setSecret(randomSecret().toString());
@@ -120,6 +122,11 @@ export default function IssuerPage() {
 
         const credential = {
           birthYear: year,
+          region: {
+            bit: Number(regionBit),
+            code: regionByBit(regionBit).code,
+            name: regionByBit(regionBit).name,
+          },
           secret,
           commitment,
           issuer: address,
@@ -136,7 +143,7 @@ export default function IssuerPage() {
         setBusy(false);
       }
     },
-    [address, birthYear, commitment, ethereum, secret, toast],
+    [address, birthYear, regionBit, commitment, ethereum, secret, toast],
   );
 
   const download = useCallback(() => {
@@ -177,6 +184,7 @@ export default function IssuerPage() {
               <DataRow label="Commitment">
                 <Hash value={issued.credential.commitment} label="commitment" />
               </DataRow>
+              <DataRow label="Region">{issued.credential.region.name}</DataRow>
               <DataRow label="Transaction">
                 <Hash
                   value={issued.receipt.hash}
@@ -256,6 +264,32 @@ export default function IssuerPage() {
           </div>
 
           <div className="form-group">
+            <label className="label-private" htmlFor="region">
+              <span aria-hidden="true">🔒</span> Region of residence
+            </label>
+            <select
+              id="region"
+              value={regionBit}
+              onChange={(e) => setRegionBit(e.target.value)}
+              disabled={busy}
+            >
+              {groupedRegions().map(([group, regions]) => (
+                <optgroup key={group} label={group}>
+                  {regions.map((r) => (
+                    <option key={r.bit} value={r.bit}>
+                      {r.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <p className="text-dim">
+              Attesting this is a heavier obligation than attesting a birth year — it needs proof
+              of address, not just a passport.
+            </p>
+          </div>
+
+          <div className="form-group">
             <label className="label-private" htmlFor="secret">
               <span aria-hidden="true">🔒</span> Secret
             </label>
@@ -290,14 +324,15 @@ export default function IssuerPage() {
           </div>
 
           <Panel title="Commitment preview" className="commitment-preview">
-            <p className="preview-formula mono">Poseidon(birthYear, secret)</p>
+            <p className="preview-formula mono">Poseidon(birthYear, region, secret)</p>
             {commitment ? (
               <Hash value={commitment} label="commitment" lead={14} tail={10} />
             ) : (
               <p className="text-dim">Enter a birth year and secret to compute the commitment.</p>
             )}
             <p className="preview-note">
-              Only this value is published. The birth year and secret stay in this browser.
+              Only this value is published. The birth year, region and secret stay in this
+              browser.
             </p>
           </Panel>
 

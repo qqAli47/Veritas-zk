@@ -37,7 +37,7 @@ design — see §3.
 ### T2 — Proof theft / front-running
 **Vector.** Watch the mempool, copy a pending proof, and submit it first.
 **Mitigation.** The subject address is packed into a public signal and bound
-into the R1CS by `Num2Bits(192)`. `VeritasCore` credits the attestation to the
+into the R1CS by `Num2Bits(253)`. `VeritasCore` credits the attestation to the
 subject named *inside the proof*, never to `msg.sender`. A thief can only pay
 gas to deliver the victim their own attestation.
 **Tests.** *credits the attestation to the proof subject, not to the submitter*;
@@ -80,7 +80,8 @@ have closed it.
 
 ### T6 — Forged credential
 **Vector.** Invent a `birthYear` and `secret` and prove against them.
-**Mitigation.** The circuit enforces `Poseidon(birthYear, secret) == commitment`,
+**Mitigation.** The circuit enforces
+`Poseidon(birthYear, regionCode, secret) == commitment`,
 and the contract requires that commitment to be registered and unrevoked.
 **Test.** *rejects a proof whose commitment was never registered*.
 **Residual.** Bounded by A1.
@@ -119,12 +120,41 @@ flip.
 ### T11 — Malformed public inputs
 **Vector.** Hand-craft calldata with out-of-range values to reach an unintended
 branch or a silent truncation.
-**Mitigation.** `packed >> 192 != 0` is rejected before any cast; commitments at
+**Mitigation.** `packed >> 253 != 0` is rejected before any cast; commitments at
 or above the field order are rejected at registration.
-**Tests.** *rejects a packed word with bits above 2^192*; *rejects a zero
+**Tests.** *rejects a packed word with bits above 2^253*; *rejects a zero
 subject*; *rejects a commitment at or above the scalar field order*.
 
-### T12 — Implementation divergence
+### T12 — Location forgery
+**Vector.** Claim a region the issuer never attested, to reach a geo-restricted
+resource.
+**Mitigation.** `regionCode` is a preimage of the commitment
+(`Poseidon(birthYear, regionCode, secret)`), so changing it produces a
+commitment no issuer registered.
+**Test.** `tests/circuit.test.js` → *produces a different commitment for a
+different region*; demo step 6.
+
+### T13 — Allowlist substitution (a privacy attack, not an access one)
+**Vector.** A malicious relying party asks the holder to prove membership in a
+*single* region. The proof is perfectly valid — and reveals the holder's country
+exactly, from a flow branded "zero-knowledge".
+**Mitigation.** `VeritasCore` pins the mask by **equality**, not subset, so
+every prover at a deployment is forced into the same, maximal anonymity set. A
+narrowed mask is rejected before the pairing even runs.
+**Test.** *rejects a proof built against a different allowlist*.
+**Note.** This is the strongest argument for equality-pinning, and it is a
+privacy property rather than a soundness one.
+
+### T14 — Bricking a deployment through policy
+**Vector.** An operator sets a mask bit at or above the circuit's 61-bit width.
+No prover could ever match it, so every verification reverts — with a message
+that gives no hint why.
+**Mitigation.** `_setPolicy` rejects an empty mask, a mask setting the reserved
+bit-0 sentinel, and any mask wider than `N_REGIONS`.
+**Tests.** *rejects a policy with a bit above the circuit width*; *rejects a
+policy that sets the reserved bit-0 sentinel*.
+
+### T15 — Implementation divergence
 **Vector.** Not an attack, but a failure with security consequences: the
 browser's Poseidon drifts from the circuit's, so commitments silently stop
 matching.
@@ -144,6 +174,8 @@ credible.
 | **Credentials are transferable.** Whoever holds the secret can prove that age. | Binding a credential to a person needs biometrics or secure hardware. Out of scope, and it would not be zero-knowledge. |
 | **Revocation latency.** Revoking a commitment does not cancel an attestation already granted from it. | Bounded by one epoch (30 days by default). `revokeAttestation()` is the manual override. |
 | **The issuer is a single point of trust.** | Deliberate for this project. A production system would use multiple issuers or a threshold scheme. |
+| **The issuer's KYC burden grew.** Attesting a birth year needs a passport; attesting a region needs proof of address. | A1 is now doing strictly more work. Named here rather than left implicit. |
+| **The anonymity set is only as large as the policy.** A deployment permitting one region reveals every holder's location. | Inherent to set membership. Surfaced in the UI before the user proves, rather than banned — a single-region gate is a legitimate deployment. |
 | **Epoch-boundary race.** A proof built in epoch *N* and mined in *N+1* reverts with `BadContext`. | A few seconds once a month. Accepting the previous epoch was considered and rejected: the resulting attestation would already have expired. |
 | **Year approximation.** `AVG_YEAR_SECONDS` tracks 1 January to within about half a day. | `maxYearLag` already tolerates a year of slack; `yearOverride` is the escape hatch. |
 | **Anonymity-set size.** With few registered credentials, timing can narrow down who verified. | Inherent to any such system; it improves as the registry grows. |
@@ -180,12 +212,41 @@ the report rather than glossed over — and if the offline fallback path in
 From the complete public record, an observer can determine:
 
 - how many credentials exist, and when each was registered;
-- that a particular address holds an attestation, and for what minimum age;
-- that some credential was used in some context.
+- that a particular address holds an attestation, for what minimum age, and
+  against which region allowlist;
+- that some credential was used in some context;
+- **which commitment was used**, and therefore **that two verifications came
+  from the same credential** — see the correction below.
 
 They cannot determine:
 
 - any birth year, or anyone's age beyond "at least the threshold";
-- which registered credential produced a given verification;
-- whether two verifications in different contexts came from the same credential;
-- anything at all linking a commitment to a person.
+- any holder's region beyond "one of the N the policy permits";
+- anything linking a commitment to a person, *unless they already know that
+  link* — which the issuer does.
+
+### A correction to an earlier version of this document
+
+Earlier revisions claimed an observer could not determine *"which registered
+credential produced a given verification"* nor *"whether two verifications in
+different contexts came from the same credential"*. **Both were false.**
+
+`commitment` is public signal 0. It sits in the clear in the calldata of every
+`verifyAge` transaction, and it is constant across contexts, epochs and chains.
+The context-scoped nullifier gives unlinkability *of nullifiers*; the public
+commitment defeats it entirely.
+
+This matters for what the location feature can honestly claim:
+
+- **Against a third party who cannot link a commitment to a person:** the
+  membership proof reveals only "one of N regions". The claim holds.
+- **Against the issuer:** no privacy at all. The issuer registered the
+  commitment, knows whose it is, and attested the region itself. It can read the
+  chain and see exactly who verified, when, and under which policy. Anonymity
+  set = 1.
+
+The honest framing is therefore: *the in-circuit membership proof hides the
+region from parties who merely observe the chain; it does not hide it from the
+issuer, who already knows it.* That is still a real property — the alternative,
+publishing `regionOf(commitment)` in the registry, would leak it to everyone —
+but the delta must be stated precisely.

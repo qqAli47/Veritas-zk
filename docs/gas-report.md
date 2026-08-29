@@ -19,20 +19,47 @@ The project's Definition of Done sets a hard target:
 
 | Operation | Gas | Target | Status |
 |---|---:|---:|:--:|
-| **`VeritasCore.verifyAge` (worst case, first verification)** | **297,018** | 300,000 | ✅ |
-| `verifyAge` (average across 29 test calls) | 295,799 | — | |
-| `verifyAge` (best case, warm attestation slot) | 279,882 | — | |
-| `Groth16Verifier.verifyProof` alone | 236,038 | — | |
+| **`VeritasCore.verifyAge` (worst case, first verification)** | **297,292** | 300,000 | ✅ |
+| `verifyAge` (average across 35 test calls) | 296,247 | — | |
+| `verifyAge` (best case, warm attestation slot) | 280,084 | — | |
+| `Groth16Verifier.verifyProof` alone | 236,110 | — | |
 
-The target is met, with about 1% of headroom in the worst case. That margin is
+The target is met, with about 0.9% of headroom in the worst case. That margin is
 thin enough to be worth defending, which is why
 [`tests/Gas.test.js`](../tests/Gas.test.js) asserts it — a regression fails CI
 rather than being discovered during a demonstration.
 
+### What the location attribute cost
+
+A second attested attribute — proved in zero knowledge, pinned on-chain — cost
+**274 gas**, from 297,018 to 297,292.
+
+That is not a rounding error being hidden; it is the whole point of the design.
+The obvious implementation gives the region allowlist its own public signal,
+which costs **~6,800 gas** (one ECMUL, one ECADD, plus calldata) and lands at
+roughly 304,000 — over target, with no remaining fat to reclaim. Carrying the
+allowlist in the 61 spare bits of an existing signal instead costs one wider
+`Num2Bits`, and the only on-chain additions are a shift, a comparison and a
+recomputed field in a storage slot that was already being written.
+
+The 274 gas breaks down as roughly: the mask equality check (~25), recomputing
+the mask at the attestation write site (~10), the wider struct packing (~15),
+and the rest as calldata and stack movement.
+
+One subtlety worth stating, because it is easy to measure dishonestly: the mask
+sits in the packed public signal, so **its popcount changes the calldata cost**
+— roughly 200 gas between a three-region allowlist and a sixty-region one.
+`tests/Gas.test.js` therefore measures the *widest* realistic mask, which is
+also what `scripts/deploy.js` configures by default. Benchmarking a narrow mask
+would have quietly understated the real figure by about the size of the whole
+feature.
+
 ## 2. Where the gas goes
 
-`verifyAge` costs 297,018. Of that, 236,038 — **79%** — is the Groth16 pairing
-check, which is irreducible without changing proof system.
+`verifyAge` costs 297,292. Of that, 236,110 — **79%** — is the Groth16 pairing
+check, which is irreducible without changing proof system. Note that this figure
+is essentially unchanged from the single-attribute version: the pairing cost is
+driven by the NUMBER of public signals, not by what they contain.
 
 | Component | Approx. gas | Share |
 |---|---:|---:|
@@ -54,21 +81,27 @@ verifiable on-chain attestation. Neither can be had for free.
 Three changes moved `verifyAge` from **321,173** to **297,018** — a 24,155 gas
 reduction, and the difference between missing and meeting the target.
 
-### 3.1 Packing three public signals into one (−12,300)
+### 3.1 Packing four values into one public signal (−12,300, then −6,800)
 
 Groth16 verification performs one elliptic-curve multiplication (~6,000 gas) per
 public signal. Carrying `subject`, `currentYear` and `threshold` separately
-would mean three signals; packing them into a single 192-bit field element means
-one.
+would mean three signals; packing them into one field element means one. When
+the region allowlist arrived it went into the same word, saving a further ~6,800.
 
 ```
 bits [  0.. 15]  threshold    uint16
 bits [ 16.. 31]  currentYear  uint16
 bits [ 32..191]  subject      uint160
+bits [192..252]  regionMask   61 bits    ← the location allowlist
 ```
 
-The single `Num2Bits(192)` that unpacks it does three jobs at once: it
-range-checks the two 16-bit fields, proves the word fits in 192 bits so the
+253 is the widest safe decomposition: `2^253 < p < 2^254`, so the map from
+bit-strings to field elements stays injective. (This is exactly why circomlib
+bolts an `AliasCheck` onto `Num2Bits_strict` at 254 and not at 253.) The 61
+spare bits are what the whole location design fits inside.
+
+The single `Num2Bits(253)` that unpacks it does three jobs at once: it
+range-checks the two 16-bit fields, proves the word fits in 253 bits so the
 Solidity casts cannot truncate, and — critically — forces the signal to
 participate in real constraints. That last point is not cosmetic: a public input
 appearing in *no* constraint has an identity IC point, and Groth16 verification
@@ -103,11 +136,12 @@ only the storage layout differs.
 | `revokeCommitment` | 30,845 | Issuer |
 | `setPolicy` | 32,420 | Admin |
 | `revokeAttestation` | 25,976 | Admin |
-| `GatedContent.canAccess` (the integration cost) | ~27,661 | Relying party |
-| `GatedContent.accessContent` (incl. the demo's own counters) | 73,459 | User |
+| `GatedContent.canAccess` (the integration cost) | ~27,971 | Relying party |
+| `GatedContent.accessContent` (incl. the demo's own counters) | 75,008 | User |
 
-The number a real integrator cares about is **`canAccess` at ~27,661 gas** —
-one external call and one `SLOAD`. `accessContent` is higher only because the
+The number a real integrator cares about is **`canAccess` at ~27,971 gas** —
+one external call and one `SLOAD`. It now checks age *and* region for that
+price, because both live in the same attestation slot. `accessContent` is higher only because the
 example contract bumps two of its own counters, which says nothing about the
 cost of Veritas.
 
@@ -127,15 +161,21 @@ size limit (`VeritasCore` is the largest at 7,639 bytes).
 
 | Metric | Value |
 |---|---:|
-| Non-linear constraints | 761 |
-| Linear constraints | 566 |
+| Non-linear constraints | 965 |
+| Linear constraints | 635 |
 | Public signals | 4 |
-| Private inputs | 2 |
-| Wires | 1,323 |
-| Proving key size | 0.64 MB |
+| Private inputs | 3 |
+| Wires | 1,595 |
+| Proving key size | 0.75 MB |
 | Proof generation (browser, single-threaded) | ~0.5 s |
 
-Roughly 486 of the 761 non-linear constraints are the two Poseidon
+Adding location cost **204 constraints**: +21 for moving the commitment from
+Poseidon(2) to Poseidon(3), +61 for widening `Num2Bits(192)` to `Num2Bits(253)`,
+and ~123 for the private set-membership check (a `Decoder` producing a one-hot
+vector, then a dot product against the mask bits). Powers of Tau power 12 still
+applies — 4,096 capacity against 965 used.
+
+Roughly 507 of the 965 non-linear constraints are the two Poseidon
 permutations. SHA-256 would need tens of thousands for the same job — the
 circuit would not fit in a power-12 Powers of Tau, proving would take minutes
 rather than half a second, and the trusted setup would be far larger. This is
@@ -157,6 +197,25 @@ EVM. The saving is marginal and on-chain policy transparency would be lost.
 **Removing the attestation write.** Would save 22,100 gas and eliminate the
 feature that makes on-chain gating possible. Not a trade worth making.
 
+**A full 253-bit country mask as a fifth public signal.** Would support all ~249
+ISO 3166 countries instead of 61 curated regions, at ~6,800 gas — landing around
+304,000 and breaking the stated target with no remaining savings to find. The
+honest options were "restate the Definition of Done" or "fit it in the spare
+bits"; the second preserves the target and, incidentally, gives *better* privacy,
+since coarser regions mean larger anonymity sets.
+
+**A Merkle root of the allowlist.** Depth-8 inclusion costs ~1,960 constraints
+and still needs a public signal for the root, so it is worse on both axes.
+Truncating the root into the spare bits would let an attacker grind a colliding
+allowlist containing their own region — and would contradict §6's own rejection
+of truncating `context` for the same reason.
+
+**Moving `subject` out of `packed` and into `context`.** Frees 160 bits for a
+much wider mask at almost no gas. Rejected: it would make `context`, and
+therefore `nullifier = Poseidon(secret, context)`, subject-dependent — yielding
+one attestation per address per epoch instead of one per credential. Sybil
+resistance would evaporate.
+
 **PLONK instead of Groth16.** A universal setup, no per-circuit ceremony — but
 a larger proof and materially more expensive on-chain verification. For a fixed
 circuit, Groth16 is the right choice.
@@ -167,7 +226,7 @@ At 30 gwei with ETH at $2,000:
 
 | Operation | Gas | Mainnet cost |
 |---|---:|---:|
-| `verifyAge` | 297,018 | ~$17.82 |
+| `verifyAge` | 297,292 | ~$17.84 |
 | `registerCommitment` | 55,808 | ~$3.35 |
 | `canAccess` (off-chain read) | 0 | free |
 

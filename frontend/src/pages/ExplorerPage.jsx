@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { readCore, readProvider, readRegistry } from '../contracts/clients.js';
 import { CONTRACTS, DEPLOY_BLOCK, NETWORK_NAME, addressUrl, txUrl } from '../contracts/config.js';
 import { EmptyState, Hash, Panel, Skeleton } from '../components/primitives.jsx';
+import { anonymitySetSize, describeMask } from '../zk/regions.js';
 
 /**
  * A public view of everything Veritas puts on-chain.
@@ -124,7 +125,19 @@ export default function ExplorerPage() {
           <Stat label="Credentials issued" value={state.totalRegistered} />
           <Stat label="Verifications" value={state.verifications.length} />
           <Stat label="Minimum age" value={`${state.policy.minAge}+`} />
+          <Stat
+            label="Regions served"
+            value={anonymitySetSize(state.policy.allowedRegions)}
+          />
         </div>
+
+        <Panel title="Region policy">
+          <p className="text-dim">
+            Every proof asserts membership in exactly this set, so its size is the anonymity set
+            each holder hides in. The verifier learns a holder is somewhere in it, never where.
+          </p>
+          <p>{describeMask(state.policy.allowedRegions, 100)}</p>
+        </Panel>
 
         <Panel title="Contracts">
           <dl className="proof-dl">
@@ -218,9 +231,10 @@ export default function ExplorerPage() {
         <div className="notice notice-info">
           <strong className="notice-title">What you cannot find here</strong>
           <p className="notice-message">
-            No birth years, no names, no documents, no ages — only that <em>someone</em> holding a
-            registered credential proved they met a threshold. A commitment is a Poseidon hash
-            salted with ~254 bits of entropy, so it cannot be brute-forced back to a birth year.
+            No birth years, no regions, no names, no documents, no ages — only that{' '}
+            <em>someone</em> holding a registered credential proved they met a threshold and were
+            somewhere in the permitted set. A commitment is a Poseidon hash salted with ~254 bits
+            of entropy, so it cannot be brute-forced back to a birth year or a country.
           </p>
         </div>
 

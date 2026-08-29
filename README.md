@@ -1,11 +1,16 @@
 # Veritas-zk
 
-**Prove you are old enough — without revealing when you were born.**
+**Prove you are old enough, and where you are — without revealing either.**
 
-A privacy-preserving age-verification system built on zk-SNARKs. A user proves
-to an Ethereum smart contract that their age meets a threshold, using a Groth16
-proof generated entirely in their own browser. No birth date, no document, and
-no identifier ever leaves the device.
+A privacy-preserving attribute-verification system built on zk-SNARKs. A user
+proves to an Ethereum smart contract that their **age** meets a threshold and
+that their **location** is one the verifier serves — using a Groth16 proof
+generated entirely in their own browser. No birth date, no country, no document
+and no identifier ever leaves the device.
+
+The location proof is *private set membership*: the verifier learns "this holder
+is in one of the N regions I accept", never which one. N is the holder's
+anonymity set, and the app shows it before they commit to proving anything.
 
 ```
 Issuer                    Holder's browser                  Ethereum
@@ -32,10 +37,10 @@ Issuer                    Holder's browser                  Ethereum
 
 | | |
 |---|---|
-| Circuit | 761 non-linear constraints, 4 public signals |
+| Circuit | 965 non-linear constraints, 4 public signals, 2 attributes |
 | Proving | ~0.5 s in-browser, in a Web Worker |
-| On-chain verification | **297,018 gas** (target: < 300,000) ✅ |
-| Tests | **85 passing** — circuit, contracts, integration, gas, parity |
+| On-chain verification | **297,232 gas** (target: < 300,000) ✅ |
+| Tests | **111 passing** — circuit, contracts, integration, gas, parity |
 | Networks | Local Hardhat and Sepolia |
 
 ## What makes this more than a demo
@@ -43,6 +48,9 @@ Issuer                    Holder's browser                  Ethereum
 The specification this project started from contained three exploitable design
 flaws. Finding and closing them is the substance of the work:
 
+- **Location is proved, not disclosed.** The region rides in the spare bits of
+  an existing public signal, so a second attested attribute costs **214 gas** —
+  where the obvious implementation would have cost ~6,800 and broken the budget.
 - **The threshold was prover-chosen.** Nothing stopped a prover submitting
   `threshold = 0`. The contract now pins it to on-chain policy.
 - **The reference year was prover-chosen.** `currentYear = 3000` made a newborn
@@ -119,7 +127,15 @@ attacks the system four ways, printing which contract error stops each:
 ✓ RELAY   — attacker submitted unchanged; attestation went to the holder
 ✓ blocked — THRESHOLD FORGERY — claiming threshold = 0      → ThresholdBelowPolicy
 ✓ blocked — YEAR FORGERY — claiming the year is 2046        → YearInFuture
+✓ blocked — REGION FORGERY — claiming an unattested region  → CommitmentNotValid
+✓ blocked — ALLOWLIST SUBSTITUTION — narrowing to 1 region  → RegionMaskMismatch
 ```
+
+The last one is a *privacy* attack rather than an access one. A malicious
+relying party would love you to prove membership in a single region, because
+that reveals exactly where you are from a flow branded "zero-knowledge". The
+contract pins the allowlist by equality, so every prover is forced into the same
+maximal anonymity set.
 
 ## Deploy to Sepolia
 
@@ -139,7 +155,8 @@ produce a permanently dead deployment.
 run.bat / run.sh             one-command setup and launch
 WALKTHROUGH.md               a from-scratch explanation for new developers
 circuits/
-  attribute_check.circom     the circuit — 761 constraints
+  attribute_check.circom     the circuit — 965 constraints, 2 attributes
+  regions.json               the region registry — APPEND-ONLY, see the header
   public_signals.json        generated: the frozen public-signal layout
 contracts/
   VeritasCore.sol            policy, verification, nullifiers, attestations

@@ -6,6 +6,7 @@ import { readCore, writeCore } from '../contracts/clients.js';
 import { decodeContractError } from '../contracts/errors.js';
 import { txUrl } from '../contracts/config.js';
 import { DataRow, ErrorPanel, Hash, Panel, Skeleton } from '../components/primitives.jsx';
+import { anonymitySetSize, describeMask } from '../zk/regions.js';
 
 /**
  * The gated area.
@@ -139,6 +140,10 @@ export default function RestrictedPage() {
               <Hash value={address} label="address" />
             </DataRow>
             <DataRow label="Proven age">{String(state.attestation.minAge)}+</DataRow>
+            <DataRow label="Proven region">
+              1 of {anonymitySetSize(state.attestation.regions)}{' '}
+              <span className="text-dim">({describeMask(state.attestation.regions)})</span>
+            </DataRow>
             <DataRow label="Valid until">{validUntil.toLocaleString()}</DataRow>
             <DataRow label="Epoch">{String(state.attestation.epoch)}</DataRow>
             {receipt && (
@@ -160,7 +165,8 @@ export default function RestrictedPage() {
           <h3 className="platform-content-title">Age-restricted content</h3>
           <p className="platform-content-body">
             You are through the gate. A relying party learned exactly one fact about you — that you
-            are old enough — and nothing else. No birth date, no document, no identity.
+            are old enough, and that you are somewhere in the regions it serves. Nothing else.
+            No birth date, no country, no document, no identity.
           </p>
           <div className="platform-features">
             <div className="feature-chip">🔐 Nothing revealed</div>

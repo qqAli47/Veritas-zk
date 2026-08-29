@@ -7,6 +7,14 @@ import { useToast } from '../providers/ToastProvider.jsx';
 import { prover, assertSignalShape } from '../zk/proverClient.js';
 import { computeCommitment } from '../zk/poseidon.js';
 import { pack, toDec, shorten } from '../zk/field.js';
+import {
+  SELECTABLE_REGIONS,
+  anonymitySetSize,
+  describeMask,
+  groupedRegions,
+  maskAllows,
+  regionByBit,
+} from '../zk/regions.js';
 import { readCore, readRegistry, writeCore } from '../contracts/clients.js';
 import { decodeContractError, decodeProofError } from '../contracts/errors.js';
 import {
@@ -38,6 +46,7 @@ export default function ProvePage() {
   // Manual-entry fields
   const [manualYear, setManualYear] = useState('');
   const [manualSecret, setManualSecret] = useState('');
+  const [manualRegion, setManualRegion] = useState(String(SELECTABLE_REGIONS[0].bit));
 
   // Start downloading the circuit artifacts immediately, so pressing
   // "Generate" begins proving rather than begins fetching 2 MB.
@@ -52,8 +61,17 @@ export default function ProvePage() {
     let cancelled = false;
     (async () => {
       try {
-        const [context, epoch, year, minAge] = await readCore().proverParams();
-        if (!cancelled) setParams({ context, epoch, year: Number(year), minAge: Number(minAge) });
+        const [context, epoch, year, minAge, allowedRegions] =
+          await readCore().proverParams();
+        if (!cancelled) {
+          setParams({
+            context,
+            epoch,
+            year: Number(year),
+            minAge: Number(minAge),
+            allowedRegions: BigInt(allowedRegions),
+          });
+        }
       } catch (err) {
         if (!cancelled) setError(decodeContractError(err));
       }
@@ -101,9 +119,11 @@ export default function ProvePage() {
     async (e) => {
       e.preventDefault();
       try {
-        const commitment = await computeCommitment(manualYear, manualSecret);
+        const commitment = await computeCommitment(manualYear, manualRegion, manualSecret);
+        const r = regionByBit(manualRegion);
         load({
           birthYear: Number(manualYear),
+          region: { bit: Number(manualRegion), code: r?.code, name: r?.name },
           secret: manualSecret,
           commitment,
           issuer: null,
@@ -113,12 +133,32 @@ export default function ProvePage() {
         setError(decodeProofError(err));
       }
     },
-    [manualYear, manualSecret, load],
+    [manualYear, manualRegion, manualSecret, load],
   );
 
   // ── Step 2: generate the proof ──────────────────────────────────────────
   const generate = useCallback(async () => {
     setError(null);
+
+    /*
+     * Check eligibility BEFORE proving. Without this the holder waits a second
+     * for witness generation to fail with `Assert Failed. Error in template
+     * Decoder_...`, which says nothing useful. The allowlist is public policy
+     * and the region never leaves this device, so the check leaks nothing.
+     */
+    if (!maskAllows(params.allowedRegions, credential.region.bit)) {
+      setError({
+        code: 'REGION_NOT_ELIGIBLE',
+        tone: 'error',
+        title: 'This verifier does not accept your region',
+        message:
+          `Your credential was issued for ${credential.region.name}. This verifier accepts: ` +
+          `${describeMask(params.allowedRegions)}.`,
+        hint: 'Nothing was sent and no gas was spent.',
+      });
+      return;
+    }
+
     setBusy(true);
     setProgress({ label: 'Preparing', ratio: 0 });
 
@@ -128,8 +168,9 @@ export default function ProvePage() {
     try {
       const input = {
         context: toDec(params.context),
-        packed: pack(address, params.year, params.minAge).toString(),
+        packed: pack(address, params.year, params.minAge, params.allowedRegions).toString(),
         birthYear: String(credential.birthYear), // private
+        regionCode: String(credential.region.bit), // private
         secret: toDec(credential.secret), // private
       };
 
@@ -266,6 +307,27 @@ export default function ProvePage() {
                 />
               </div>
               <div className="form-group">
+                <label className="label-private" htmlFor="mRegion">
+                  <span aria-hidden="true">🔒</span> Region
+                </label>
+                <select
+                  id="mRegion"
+                  value={manualRegion}
+                  onChange={(e) => setManualRegion(e.target.value)}
+                >
+                  {groupedRegions().map(([group, regions]) => (
+                    <optgroup key={group} label={group}>
+                      {regions.map((r) => (
+                        <option key={r.bit} value={r.bit}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
                 <label className="label-private" htmlFor="mSecret">
                   <span aria-hidden="true">🔒</span> Secret
                 </label>
@@ -295,6 +357,7 @@ export default function ProvePage() {
                 <DataRow label="Commitment">
                   <Hash value={credential.commitment} label="commitment" />
                 </DataRow>
+                <DataRow label="Region">{credential.region?.name ?? '—'}</DataRow>
                 <DataRow label="Registered">
                   {registered === null ? (
                     'checking…'
@@ -319,6 +382,8 @@ export default function ProvePage() {
                 onAction={() => navigate('/issuer')}
               />
             )}
+
+            {params && <AnonymitySet mask={params.allowedRegions} />}
 
             <PrivacyLedger params={params} address={address} />
 
@@ -426,10 +491,44 @@ function mapReason(reason) {
       YEAR_IN_FUTURE: 'YearInFuture',
       YEAR_STALE: 'YearStale',
       BAD_CONTEXT: 'BadContext',
+      REGION_MASK_STALE: 'RegionMaskMismatch',
       COMMITMENT_NOT_VALID: 'CommitmentNotValid',
       NULLIFIER_USED: 'NullifierAlreadyUsed',
       INVALID_PROOF: 'InvalidProof',
     }[reason] ?? reason
+  );
+}
+
+/**
+ * The honest disclosure.
+ *
+ * A membership proof reveals "the holder is in one of these N regions", so N
+ * IS the anonymity set. At N = 1 the proof reveals the region exactly — which
+ * is inherent to set membership, not a bug, and the user deserves to know
+ * before they commit to proving anything.
+ */
+function AnonymitySet({ mask }) {
+  const n = anonymitySetSize(mask);
+  const weak = n <= 2;
+
+  return (
+    <div className={`notice notice-${weak ? 'warn' : 'info'}`} role="status">
+      <strong className="notice-title">
+        {weak
+          ? `This proof narrows you to ${n === 1 ? 'a single region' : `${n} regions`}`
+          : `This proof narrows you to 1 of ${n} regions`}
+      </strong>
+      <p className="notice-message">
+        The verifier will learn that you are somewhere in: {describeMask(mask)}. It will not
+        learn which.
+      </p>
+      {weak && (
+        <p className="notice-hint">
+          With so few permitted regions there is little to hide behind — this verifier learns
+          almost exactly where you are.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -440,6 +539,7 @@ function PrivacyLedger({ params, address }) {
         <h4>Stays in this browser</h4>
         <ul>
           <li>Your birth year</li>
+          <li>Your region</li>
           <li>Your secret</li>
           <li>The witness</li>
         </ul>
@@ -451,6 +551,10 @@ function PrivacyLedger({ params, address }) {
           <li>Nullifier hash</li>
           <li>Context {params ? `(epoch ${params.epoch})` : ''}</li>
           <li>Threshold {params ? `(${params.minAge}+)` : ''} and year {params?.year}</li>
+          <li>
+            The region allowlist
+            {params ? ` (${anonymitySetSize(params.allowedRegions)} regions)` : ''}
+          </li>
           <li>Your address {address ? shorten(address, 6, 4) : ''}</li>
         </ul>
       </div>

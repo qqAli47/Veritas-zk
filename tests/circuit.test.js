@@ -26,6 +26,7 @@ const {
   verifyLocally,
   witnessSucceeds,
   toField,
+  maskOfBits,
   FIELD_ORDER,
 } = require('./helpers/zk');
 
@@ -37,21 +38,35 @@ const YEAR = 2026;
 const THRESHOLD = 18;
 const CONTEXT = 987654321987654321n;
 
+// Region bits, from circuits/regions.json: 10 = France, 11 = Germany,
+// 15 = Italy, 33 = United States, 60 = Kenya (the topmost valid bit).
+const FR = 10;
+const DE = 11;
+const IT = 15;
+const US = 33;
+const TOP = 60;
+
+const REGION = DE;
+const MASK = maskOfBits([FR, DE, IT]);
+
 const base = (over = {}) => ({
   birthYear: BIRTH_YEAR,
+  regionCode: REGION,
   secret: SECRET,
   subject: SUBJECT,
   currentYear: YEAR,
   threshold: THRESHOLD,
   context: CONTEXT,
+  regionMask: MASK,
   ...over,
 });
 
 /** Build a raw circuit input object without proving (for negative cases). */
 const rawInput = (o) => ({
   context: toField(o.context).toString(),
-  packed: pack(o.subject, o.currentYear, o.threshold).toString(),
+  packed: pack(o.subject, o.currentYear, o.threshold, o.regionMask).toString(),
   birthYear: String(o.birthYear),
+  regionCode: String(o.regionCode),
   secret: toField(o.secret).toString(),
 });
 
@@ -89,9 +104,9 @@ describe('AttributeCheck circuit', function () {
 
   // ═══════════════════════════════════════════════════════════════════════
   describe('value derivation', function () {
-    it('computes commitment = Poseidon(birthYear, secret)', async function () {
+    it('computes commitment = Poseidon(birthYear, regionCode, secret)', async function () {
       const { publicSignals } = await prove(base());
-      expect(publicSignals[0]).to.equal(await commitmentOf(BIRTH_YEAR, SECRET));
+      expect(publicSignals[0]).to.equal(await commitmentOf(BIRTH_YEAR, REGION, SECRET));
     });
 
     it('computes nullifier = Poseidon(secret, context)', async function () {
@@ -159,7 +174,70 @@ describe('AttributeCheck circuit', function () {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  describe('location assertion', function () {
+    it('accepts a holder whose region is in the allowlist', async function () {
+      const { proof, publicSignals } = await prove(base());
+      expect(await verifyLocally(publicSignals, proof)).to.equal(true);
+    });
+
+    it('accepts every region in the allowlist', async function () {
+      for (const region of [FR, DE, IT]) {
+        const { proof, publicSignals } = await prove(base({ regionCode: region }));
+        expect(await verifyLocally(publicSignals, proof), `region ${region}`).to.equal(true);
+      }
+    });
+
+    it('rejects a holder whose region is NOT in the allowlist', async function () {
+      // The credential is genuine and the holder is old enough — but the
+      // verifier does not serve the United States.
+      expect(await witnessSucceeds(rawInput(base({ regionCode: US })))).to.equal(false);
+    });
+
+    it('rejects a defaulted regionCode of 0 against any real allowlist', async function () {
+      // A credential whose regionCode defaulted to zero — a missing JSON
+      // field, a zeroed struct — must never prove anything.
+      //
+      // Note WHERE this is enforced. The circuit has no notion of a reserved
+      // bit: given a mask that contained bit 0 it would happily prove
+      // membership in it. What makes bit 0 unusable is that VeritasCore's
+      // _setPolicy rejects any mask with bit 0 set, so no real allowlist can
+      // ever contain it — see the matching contract test. Here we assert the
+      // circuit half: against a legitimate mask, regionCode 0 has no witness.
+      expect(await witnessSucceeds(rawInput(base({ regionCode: 0 })))).to.equal(false);
+    });
+
+    it('accepts the topmost valid region bit', async function () {
+      // Boundary: bit 60 is the last slot the 61-bit mask can address, and it
+      // sits at packed bit 252 — the very top of Num2Bits(253). An off-by-one
+      // in the mask offset or the decomposition width would surface here.
+      const { proof, publicSignals } = await prove(
+        base({ regionCode: TOP, regionMask: maskOfBits([TOP]) }),
+      );
+      expect(await verifyLocally(publicSignals, proof)).to.equal(true);
+    });
+
+    it('rejects a region index at or beyond the mask width', async function () {
+      // regionCode 61 is outside [0, N_REGIONS); the Decoder produces an
+      // all-zero vector and membership cannot be satisfied.
+      expect(await witnessSucceeds(rawInput(base({ regionCode: 61 })))).to.equal(false);
+    });
+
+    it('rejects an empty allowlist', async function () {
+      expect(await witnessSucceeds(rawInput(base({ regionMask: 0n })))).to.equal(false);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
   describe('soundness', function () {
+    it('rejects a proof whose region mask was widened after generation', async function () {
+      // Tampering the mask to include a region the holder is not in changes
+      // `packed`, which is bound into the R1CS by Num2Bits(253).
+      const { proof, publicSignals } = await prove(base());
+      const tampered = [...publicSignals];
+      tampered[3] = pack(SUBJECT, YEAR, THRESHOLD, maskOfBits([FR, DE, IT, US])).toString();
+      expect(await verifyLocally(tampered, proof)).to.equal(false);
+    });
+
     /**
      * THE REGRESSION TEST THAT MATTERS MOST.
      *
@@ -180,9 +258,14 @@ describe('AttributeCheck circuit', function () {
       expect(await witnessSucceeds(rawInput(base({ birthYear: wrapping })))).to.equal(false);
     });
 
-    it('rejects a packed word with bits set above 2^192', async function () {
+    it('rejects a packed word with bits set above 2^253', async function () {
+      // NOTE: this test used to set bit 200 and assert failure. Bit 200 is now
+      // region-mask bit 8, so that input became LEGAL and the test would have
+      // silently inverted — passing while asserting the opposite of the truth.
+      // 2^253 is the real boundary: Num2Bits(253) is the widest aliasing-safe
+      // decomposition, since 2^253 < p < 2^254.
       const input = rawInput(base());
-      input.packed = (BigInt(input.packed) | (1n << 200n)).toString();
+      input.packed = (BigInt(input.packed) | (1n << 253n)).toString();
       expect(await witnessSucceeds(input)).to.equal(false);
     });
 
@@ -193,6 +276,7 @@ describe('AttributeCheck circuit', function () {
         '0x000000000000000000000000000000000000dEaD', // an attacker's address
         YEAR,
         THRESHOLD,
+        MASK,
       ).toString();
       expect(await verifyLocally(tampered, proof)).to.equal(false);
     });
@@ -215,6 +299,15 @@ describe('AttributeCheck circuit', function () {
       // i.e. you cannot open someone else's commitment with your own secret
       const a = await prove(base());
       const b = await prove(base({ secret: SECRET + 1n }));
+      expect(a.commitment).to.not.equal(b.commitment);
+    });
+
+    it('produces a different commitment for a different region', async function () {
+      // The region is a preimage of the commitment, which is what stops a
+      // holder claiming a location the issuer never attested. Same birth year,
+      // same secret, different region => a commitment nobody registered.
+      const a = await prove(base());
+      const b = await prove(base({ regionCode: FR }));
       expect(a.commitment).to.not.equal(b.commitment);
     });
   });

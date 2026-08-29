@@ -37,6 +37,10 @@ Open the app on **Home**.
 
 ### 0:20 — Issue a credential (35 s)
 
+> "Note the region field. Attesting where someone lives is a heavier obligation
+> than attesting their birth year — it needs proof of address, not a passport."
+
+
 Navigate to **Issuer**, connected as account #0.
 
 > "This stands in for a government registry. Enter a birth year — 2000 — and
@@ -66,13 +70,21 @@ Import it. Point at *Registered: ✓ valid on-chain*.
 Point at the privacy ledger, then click **Generate proof**.
 
 > "That's a real Groth16 proof, generated in a Web Worker so the page stays
-> responsive. About half a second for 761 constraints."
+> responsive. About half a second for 965 constraints, proving two attributes."
 
 When it completes, point at the four public signals.
 
 > ★ "Look at what's about to be published: a commitment hash, a nullifier hash,
-> a context, and my address. No birth year. No secret. The contract will learn
-> that *someone* holding a registered credential is over 18 — and nothing else."
+> a context, and my address. No birth year. No region. No secret. The contract
+> will learn that *someone* holding a registered credential is over 18 and
+> somewhere in the permitted set — and nothing else."
+
+Point at the anonymity-set panel.
+
+> "And it tells you exactly how much you're revealing: one of N regions. If a
+> verifier narrowed that to one, the panel turns amber — because at N=1 a
+> membership proof reveals your country exactly. That's inherent to set
+> membership, so we disclose it rather than pretend otherwise."
 
 ### 1:35 — Verify on-chain (25 s)
 
@@ -110,9 +122,10 @@ Optionally open DevTools → Network and filter for the birth year.
 
 Switch to the second terminal and run `npm run demo:local`.
 
-> "The same flow from the command line, and then four attacks — replay, proof
-> theft, threshold forgery, year forgery — each stopped by a different check,
-> each with a regression test."
+> "The same flow from the command line, and then six attacks — replay, proof
+> theft, threshold forgery, year forgery, region forgery and allowlist
+> substitution — each stopped by a different check, each with a regression
+> test."
 
 Let the output scroll. End on the green summary.
 
@@ -138,6 +151,17 @@ Let the output scroll. End on the green summary.
 > saved 12,000. Deleting a statistics counter that could be reconstructed from
 > event logs saved 22,000. Moving the pause flag into a slot we already load
 > saved 2,000. 297,000 — and a test asserts it so it can't regress."
+
+> "Then we added a whole second attribute for **214 gas**, because the region
+> allowlist went into 61 spare bits of a signal we were already paying for.
+> Giving it its own public signal would have cost 6,800 and broken the target."
+
+**Questions about location (+30 s).**
+
+> "Why 61 regions and not all 249 countries? Because 61 is what fits for free,
+> and coarser buckets are *better* for privacy — a bigger anonymity set. The
+> alternative costs 6,800 gas and breaks the budget. That trade-off is measured
+> in the gas report, not asserted."
 
 ---
 

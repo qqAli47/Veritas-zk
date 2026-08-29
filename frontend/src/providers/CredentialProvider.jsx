@@ -3,12 +3,21 @@ import { CHAIN, CONTRACTS } from '../contracts/config.js';
 
 const CredentialContext = createContext(null);
 
-export const CREDENTIAL_SCHEMA = 'veritas.credential/v1';
+export const CREDENTIAL_SCHEMA = 'veritas.credential/v2';
+
+/**
+ * v1 credentials carried only (birthYear, secret). v2 adds `region`, and the
+ * commitment moved from Poseidon(2) to Poseidon(3) to bind it. A v1 credential
+ * therefore cannot produce a valid proof — and would fail with an opaque
+ * "commitment not registered" revert several steps later. Detect it here and
+ * say what actually happened.
+ */
+const LEGACY_SCHEMAS = ['veritas.credential/v1'];
 
 /**
  * The holder's credential.
  *
- * `birthYear` and `secret` live in React state and NOWHERE else. They are
+ * `birthYear`, `region` and `secret` live in React state and NOWHERE else. They are
  * never written to localStorage, sessionStorage, a cookie, or a URL. The whole
  * privacy claim of this project rests on those two values not leaving the
  * device, and persisting them "for convenience" would quietly undermine it.
@@ -40,12 +49,23 @@ export function CredentialProvider({ children }) {
       return null;
     }
 
+    if (LEGACY_SCHEMAS.includes(parsed.schema)) {
+      setError(
+        'This credential predates location support and can no longer be used. ' +
+          'Ask your issuer to re-issue it.',
+      );
+      return null;
+    }
     if (parsed.schema !== CREDENTIAL_SCHEMA) {
       setError(`Unrecognised credential format (${parsed.schema ?? 'no schema field'}).`);
       return null;
     }
     if (parsed.birthYear == null || parsed.secret == null || !parsed.commitment) {
       setError('The credential file is missing required fields.');
+      return null;
+    }
+    if (parsed.region == null || parsed.region.bit == null) {
+      setError('The credential file is missing its region.');
       return null;
     }
     // A credential is bound to the registry that issued it. Silently accepting
@@ -69,6 +89,7 @@ export function CredentialProvider({ children }) {
 
     const cred = {
       birthYear: Number(parsed.birthYear),
+      region: { bit: Number(parsed.region.bit), code: parsed.region.code, name: parsed.region.name },
       secret: String(parsed.secret),
       commitment: String(parsed.commitment),
       issuer: parsed.issuer ?? null,
@@ -104,6 +125,7 @@ export function toCredentialFile(cred) {
     chainId: Number(CHAIN.id),
     registry: CONTRACTS.registry,
     birthYear: cred.birthYear,
+    region: cred.region,
     secret: cred.secret,
     commitment: cred.commitment,
     issuedAt: cred.issuedAt ?? new Date().toISOString(),

@@ -13,7 +13,9 @@
  * Usage: node scripts/zk/verify-browser-path.mjs
  */
 import fs from 'node:fs';
-import { poseidon2 } from 'poseidon-lite';
+import { poseidon3 } from 'poseidon-lite';
+import { pack, toField } from './credential.mjs';
+import { maskOf, regionBit } from './regions.mjs';
 import vm from 'node:vm';
 
 const ZK = 'frontend/public/zk';
@@ -34,19 +36,23 @@ if (!snarkjs?.groth16?.fullProve) {
   throw new Error('snarkjs.min.js did not expose groth16 globally — the worker would break.');
 }
 
-const FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const toField = (x) => ((BigInt(x) % FIELD) + FIELD) % FIELD;
-const pack = (s, y, t) => (BigInt(s) << 32n) | (BigInt(y) << 16n) | BigInt(t);
+// Field arithmetic and packing come from the canonical Node implementation —
+// this script must not carry its own copy, or the two can drift.
+// The Poseidon call below deliberately still uses poseidon-lite, because
+// checking the BROWSER's hash against the circuit is the whole point here.
 
 const birthYear = 2000;
+const regionCode = regionBit('DE');
 const secret = toField(BigInt('0x' + 'ab'.repeat(32)));
 const subject = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 const context = 987654321987654321n;
+const regionMask = maskOf(['DE', 'FR', 'IT']);
 
 const input = {
   context: toField(context).toString(),
-  packed: pack(subject, 2026, 18).toString(),
+  packed: pack(subject, 2026, 18, regionMask).toString(),
   birthYear: String(birthYear),
+  regionCode: String(regionCode),
   secret: toField(secret).toString(),
 };
 
@@ -62,9 +68,10 @@ const ok = await snarkjs.groth16.verify(vkey, publicSignals, proof);
 const raw = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
 const [a, b, c, pub] = JSON.parse('[' + raw + ']');
 
-// The frontend computes the commitment with poseidon-lite BEFORE proving,
-// to check registration. It must equal what the circuit produced.
-const predicted = poseidon2([toField(birthYear), toField(secret)]).toString();
+// The frontend computes the commitment with poseidon-lite BEFORE proving, to
+// check registration. It must equal what the circuit produced — now over three
+// preimages rather than two.
+const predicted = poseidon3([toField(birthYear), toField(regionCode), toField(secret)]).toString();
 
 console.log('snarkjs UMD bundle loaded :', typeof snarkjs.groth16.fullProve === 'function');
 console.log('proof generated in        :', ms, 'ms');

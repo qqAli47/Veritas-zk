@@ -50,7 +50,7 @@ const FORCE = process.argv.includes("--force");
  * and the resulting setup would be worthless as a security claim.
  *
  * The Hermez ceremony had 54 independent contributors. Power 12 supports
- * 4,096 constraints; our circuit uses 761.
+ * 4,096 constraints; our circuit uses 965.
  */
 const PTAU_NAME = "powersOfTau28_hez_final_12.ptau";
 const PTAU_URL = `https://storage.googleapis.com/zkevm/ptau/${PTAU_NAME}`;
@@ -203,6 +203,20 @@ async function main() {
 
   ok(`${stats.nonLinearConstraints} non-linear constraints, ${nPublic} public signals`);
   order.forEach((n, i) => info(`publicSignals[${i}] = ${n}`));
+
+  // The circuit hardcodes N_REGIONS; the registry declares a capacity. If the
+  // two drift, masks silently mean different things on either side of the
+  // R1CS, so fail the build rather than the demo.
+  const { REGION_CAPACITY, REGIONS } = await import("./regions.mjs");
+  const mainLine = fs.readFileSync(path.join(ROOT, "circuits", `${CIRCUIT}.circom`), "utf8");
+  const declared = Number((mainLine.match(/AttributeCheck\(\s*\d+\s*,\s*\d+\s*,\s*(\d+)\s*\)/) || [])[1]);
+  if (declared !== REGION_CAPACITY) {
+    throw new Error(
+      `Circuit declares N_REGIONS=${declared} but circuits/regions.json capacity is ` +
+        `${REGION_CAPACITY}. They must match.`,
+    );
+  }
+  info(`region registry: ${REGIONS.length} of ${REGION_CAPACITY} slots used`);
 
   const requiredPower = Math.max(
     10,

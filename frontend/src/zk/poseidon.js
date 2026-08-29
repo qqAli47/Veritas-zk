@@ -16,17 +16,26 @@
  * "unregistered commitment" revert.
  */
 
-import { poseidon2 as poseidonHash } from 'poseidon-lite';
+import { poseidon2 as poseidonHash2, poseidon3 as poseidonHash3 } from 'poseidon-lite';
 import { toField } from './field.js';
 
 /** Poseidon over two field elements, as a decimal string. */
 export function poseidon2(a, b) {
-  return poseidonHash([toField(a), toField(b)]).toString();
+  return poseidonHash2([toField(a), toField(b)]).toString();
 }
 
-/** commitment = Poseidon(birthYear, secret) — what the issuer registers. */
-export async function computeCommitment(birthYear, secret) {
-  return poseidon2(birthYear, secret);
+/** Poseidon over three field elements, as a decimal string. */
+export function poseidon3(a, b, c) {
+  return poseidonHash3([toField(a), toField(b), toField(c)]).toString();
+}
+
+/**
+ * commitment = Poseidon(birthYear, regionCode, secret) — what the issuer
+ * registers. The region is a preimage, so a holder cannot assert a location
+ * the issuer never vouched for.
+ */
+export async function computeCommitment(birthYear, regionCode, secret) {
+  return poseidon3(birthYear, regionCode, secret);
 }
 
 /** nullifier = Poseidon(secret, context) — the per-context single-use token. */

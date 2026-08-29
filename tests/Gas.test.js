@@ -14,13 +14,32 @@
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
-const { skipUnlessBuilt, prove, contextFor } = require('./helpers/zk');
+const { skipUnlessBuilt, prove, contextFor, maskOfBits } = require('./helpers/zk');
 
 /** The roadmap's Definition of Done target. */
 const VERIFY_AGE_BUDGET = 300_000n;
 
 const EPOCH_SECONDS = 30 * 24 * 3600;
 const YEAR = 2026;
+
+// Region bits from circuits/regions.json.
+const FR = 10;
+const DE = 11;
+const IT = 15;
+const REGION = DE;
+
+/*
+ * The WIDEST realistic allowlist, not a convenient narrow one.
+ *
+ * The mask lives in the packed public signal, so its popcount changes how many
+ * non-zero calldata bytes the transaction carries — roughly 200 gas between a
+ * three-region mask and a full one. Measuring the narrow case would understate
+ * the real cost of a deployment that permits everywhere, which is exactly what
+ * scripts/deploy.js configures by default.
+ *
+ * Bit 0 is the reserved sentinel and can never be set.
+ */
+const MASK = maskOfBits(Array.from({ length: 60 }, (_, i) => i + 1));
 
 describe('Gas budget', function () {
   before(function () {
@@ -37,19 +56,19 @@ describe('Gas budget', function () {
     const core = await (
       await ethers.getContractFactory('VeritasCore')
     ).deploy(await verifier.getAddress(), await registry.getAddress(), admin.address, {
-      minAge: 18, epochSeconds: EPOCH_SECONDS, maxYearLag: 1, yearOverride: YEAR, paused: false,
+      minAge: 18, epochSeconds: EPOCH_SECONDS, maxYearLag: 1, yearOverride: YEAR, paused: false, allowedRegions: MASK,
     });
     const gated = await (
       await ethers.getContractFactory('GatedContent')
-    ).deploy(await core.getAddress(), 18);
+    ).deploy(await core.getAddress(), 18, MASK);
 
     const chainId = (await ethers.provider.getNetwork()).chainId;
     const ctx = contextFor(ethers, chainId, await core.getAddress(), await core.currentEpoch());
 
     const mk = (signer, secret) =>
       prove({
-        birthYear: 2000, secret, subject: signer.address,
-        currentYear: YEAR, threshold: 18, context: ctx,
+        birthYear: 2000, regionCode: REGION, secret, subject: signer.address,
+        currentYear: YEAR, threshold: 18, context: ctx, regionMask: MASK,
       });
 
     const p1 = await mk(holder, 111222333n);

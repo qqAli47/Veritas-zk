@@ -114,9 +114,9 @@ That's a zero-knowledge proof. Convincing, and revealing nothing.
 
 Real ZK proofs work on maths instead of balls. The statement we prove is:
 
-> *"I know two numbers — `birthYear` and `secret` — such that hashing them
-> together gives a value the government already published, AND
-> `2026 − birthYear ≥ 18`."*
+> *"I know three numbers — `birthYear`, `region` and `secret` — such that
+> hashing them together gives a value the government already published, AND
+> `2026 − birthYear ≥ 18`, AND `region` is one the verifier accepts."*
 
 The proof is about 800 bytes. Anyone can check it in milliseconds. And it
 reveals **nothing** about `birthYear` or `secret`.
@@ -224,7 +224,7 @@ Then, **on your own device**:
 secret = randomSecret()          // e.g. 8837291043...
 
 // 2. Hash it together with your birth year.
-commitment = Poseidon(2000, secret)
+commitment = Poseidon(2000, region, secret)
 //         = 11664204686705353987996298182432074745...
 ```
 
@@ -304,7 +304,7 @@ Out comes a proof and exactly **four public values**:
 | 0 | `commitment` | `1166420468…` | Which registered credential — but *not* whose |
 | 1 | `nullifier` | `3155646946…` | A one-time token for this site+month |
 | 2 | `context` | `0025338a…` | Which site, chain and time period |
-| 3 | `packed` | `2760931934…` | Your address, the year, the threshold |
+| 3 | `packed` | `2760931934…` | Your address, the year, the threshold, the region allowlist |
 
 > [!NOTE]
 > **Look at what's missing.** No birth year. No secret. Those two numbers went
@@ -407,15 +407,15 @@ signal output nullifier;  // 🌍 public — computed, not supplied
 ### Constraint 1 — Unpack and range-check
 
 ```circom
-component packedBits = Num2Bits(192);
+component packedBits = Num2Bits(253);
 packedBits.in <== packed;
 ```
 
 One line doing **three jobs**:
 
-1. ✅ Proves `packed` fits in 192 bits, so Solidity's casts can't truncate
+1. ✅ Proves `packed` fits in 253 bits, so Solidity's casts can't truncate
 2. ✅ Range-checks `currentYear` and `threshold` to 16 bits each
-3. ✅ **Binds** the address into the proof
+3. ✅ **Binds** the address and the region allowlist into the proof
 
 > [!WARNING]
 > **Job 3 is subtle and critical.** In Groth16, a public input that appears in
@@ -555,7 +555,7 @@ function verifyAge(uint[2] a, uint[2][2] b, uint[2] c, uint[4] pub)
 {
     // Unpack: subject ‖ year ‖ threshold, all from one field element
     uint256 packed = pub[PUB_PACKED];
-    if (packed >> 192 != 0) revert MalformedPublicInput();
+    if (packed >> PACKED_BITS != 0) revert MalformedPublicInput();
     subject = address(uint160(packed >> 32));
 
     Policy memory p = policy;                    // ← one storage read

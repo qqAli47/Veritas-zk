@@ -24,13 +24,21 @@ const hre = require('hardhat');
 const ROOT = path.join(__dirname, '..');
 const BUILD = path.join(ROOT, 'build');
 
-/** Default policy. 30-day epochs; the reference year comes from the chain clock. */
+/**
+ * Default policy. 30-day epochs; the reference year comes from the chain clock.
+ *
+ * `allowedRegions` is filled in from the region registry at deploy time — see
+ * main(). A wide allowlist is deliberate for the demo: the size of the set IS
+ * the holder's anonymity set, so a three-region policy would tell every
+ * observer far more about a holder than a thirty-region one.
+ */
 const POLICY = {
   minAge: 18,
   epochSeconds: 30 * 24 * 3600,
   maxYearLag: 1,
   yearOverride: 0,
   paused: false,
+  allowedRegions: 0n, // set below
 };
 
 const line = (s = '') => console.log(s);
@@ -40,6 +48,11 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   const issuer = process.env.ISSUER_ADDRESS || deployer.address;
 
+  // Every region except the reserved bit-0 sentinel, i.e. "location is not
+  // restricted at this deployment". An operator narrows it with setPolicy.
+  const { maskAll, anonymitySetSize } = await import('./zk/regions.mjs');
+  POLICY.allowedRegions = maskAll();
+
   line();
   line('  Veritas-zk deployment');
   line('  ' + '─'.repeat(60));
@@ -47,6 +60,7 @@ async function main() {
   line(`  deployer  ${deployer.address}`);
   line(`  balance   ${ethers.formatEther(await ethers.provider.getBalance(deployer.address))} ETH`);
   line(`  issuer    ${issuer}`);
+  line(`  regions   ${anonymitySetSize(POLICY.allowedRegions)} permitted`);
   line();
 
   // ── Pre-flight: the verifier must match the built circuit ────────────────
@@ -118,7 +132,10 @@ async function main() {
   // ── 4. Demo relying party ────────────────────────────────────────────────
   const gated = await (
     await ethers.getContractFactory('GatedContent')
-  ).deploy(await core.getAddress(), POLICY.minAge);
+    // The demo resource serves every region its attestor permits. A real
+    // relying party would narrow this; see IVeritasAttestor.isVerifiedInRegions
+    // for why the caller's proven set must be a SUBSET of this one.
+  ).deploy(await core.getAddress(), POLICY.minAge, POLICY.allowedRegions);
   await gated.waitForDeployment();
   line(`  ✓ GatedContent (demo)  ${await gated.getAddress()}`);
 
@@ -131,7 +148,7 @@ async function main() {
     deployBlock,
     deployer: deployer.address,
     issuer,
-    policy: POLICY,
+    policy: { ...POLICY, allowedRegions: POLICY.allowedRegions.toString() },
     circuit: {
       nPublic: manifest.nPublic,
       order: manifest.order,

@@ -16,6 +16,7 @@
 
 import { buildPoseidon } from "circomlibjs";
 import { randomBytes } from "node:crypto";
+import { REGION_CAPACITY, assertValidMask } from "./regions.mjs";
 
 /**
  * The BN254 (alt_bn128) scalar field order. Every circuit signal is an element
@@ -33,17 +34,23 @@ async function poseidon() {
 }
 
 /**
- * Poseidon over two field elements, returned as a decimal string.
+ * Poseidon over any number of field elements, returned as a decimal string.
  *
  * The `F.toString` is not optional: the raw return of `p(...)` is a Montgomery-
  * form byte array. Passing it directly to ethers or into input.json yields a
  * wrong-but-plausible number, which then fails on-chain with a confusing
  * "commitment not registered".
  */
-export async function poseidon2(a, b) {
+export async function poseidonN(inputs) {
   const p = await poseidon();
-  return p.F.toString(p([toField(a), toField(b)]));
+  return p.F.toString(p(inputs.map(toField)));
 }
+
+/** Poseidon over two field elements. */
+export const poseidon2 = (a, b) => poseidonN([a, b]);
+
+/** Poseidon over three field elements. */
+export const poseidon3 = (a, b, c) => poseidonN([a, b, c]);
 
 /** Reduce any integer-ish value into the scalar field. */
 export function toField(x) {
@@ -62,33 +69,50 @@ export function randomSecret() {
   return toField(BigInt("0x" + randomBytes(64).toString("hex")));
 }
 
-/** commitment = Poseidon(birthYear, secret) — what the issuer registers. */
-export const commitmentOf = (birthYear, secret) => poseidon2(birthYear, secret);
+/**
+ * commitment = Poseidon(birthYear, regionCode, secret) — what the issuer
+ * registers.
+ *
+ * The region is one of the preimages, which is what stops a holder asserting a
+ * location the issuer never vouched for. It also means a region's bit index is
+ * baked into every credential: see the append-only warning in regions.mjs.
+ */
+export const commitmentOf = (birthYear, regionCode, secret) =>
+  poseidon3(birthYear, regionCode, secret);
 
 /** nullifier = Poseidon(secret, context) — the per-context single-use token. */
 export const nullifierOf = (secret, context) => poseidon2(secret, context);
 
+/** Where the region mask starts inside the packed word. */
+export const MASK_OFFSET = 192n;
+
 /**
- * Pack the three policy-bound values into one field element.
+ * Pack every policy-bound value into ONE field element.
  *
  *   bits [  0.. 15]  threshold    uint16
  *   bits [ 16.. 31]  currentYear  uint16
  *   bits [ 32..191]  subject      uint160 (an Ethereum address)
+ *   bits [192..252]  regionMask   the allowlist
  *
- * Carrying these as one signal instead of three saves roughly 12,300 gas on
- * every verification, because Groth16 costs one elliptic-curve multiplication
- * (~6,000 gas) per public signal. See docs/gas-report.md.
+ * Groth16 costs ~6,800 gas per public signal, and the budget has under 3,000
+ * gas of headroom, so carrying these separately is not affordable. Packing
+ * them means the whole location feature costs zero extra public signals.
+ * See docs/gas-report.md.
  */
-export function pack(subject, currentYear, threshold) {
+export function pack(subject, currentYear, threshold, regionMask = 0n) {
   const s = BigInt(subject);
   const y = BigInt(currentYear);
   const t = BigInt(threshold);
+  const m = BigInt(regionMask);
 
   if (s >= 1n << 160n) throw new RangeError(`subject ${subject} exceeds 160 bits`);
   if (y >= 1n << 16n) throw new RangeError(`currentYear ${currentYear} exceeds 16 bits`);
   if (t >= 1n << 16n) throw new RangeError(`threshold ${threshold} exceeds 16 bits`);
+  if (m >= 1n << BigInt(REGION_CAPACITY)) {
+    throw new RangeError(`regionMask exceeds ${REGION_CAPACITY} bits`);
+  }
 
-  return (s << 32n) | (y << 16n) | t;
+  return (m << MASK_OFFSET) | (s << 32n) | (y << 16n) | t;
 }
 
 /** Inverse of pack(); used by tests and tooling to read back a packed word. */
@@ -98,6 +122,7 @@ export function unpack(packed) {
     threshold: Number(p & 0xffffn),
     currentYear: Number((p >> 16n) & 0xffffn),
     subject: "0x" + ((p >> 32n) & ((1n << 160n) - 1n)).toString(16).padStart(40, "0"),
+    regionMask: p >> MASK_OFFSET,
   };
 }
 
@@ -107,11 +132,22 @@ export function unpack(packed) {
  * `birthYear` and `secret` are the private signals — everything else is
  * derived and public.
  */
-export async function buildCircuitInput({ birthYear, secret, subject, currentYear, threshold, context }) {
+export async function buildCircuitInput({
+  birthYear,
+  regionCode,
+  secret,
+  subject,
+  currentYear,
+  threshold,
+  context,
+  regionMask,
+}) {
+  assertValidMask(regionMask);
   return {
     context: toField(context).toString(),
-    packed: pack(subject, currentYear, threshold).toString(),
+    packed: pack(subject, currentYear, threshold, regionMask).toString(),
     birthYear: String(birthYear),
+    regionCode: String(regionCode),
     secret: toField(secret).toString(),
   };
 }
@@ -131,7 +167,7 @@ export async function buildCircuitInput({ birthYear, secret, subject, currentYea
 export function contextIdFor({ ethers, chainId, coreAddress, epoch }) {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes32", "uint256", "address", "uint64"],
-    [ethers.id("Veritas-zk/AgeAttestation/v1"), chainId, coreAddress, epoch],
+    [ethers.id("Veritas-zk/AttributeAttestation/v2"), chainId, coreAddress, epoch],
   );
   return BigInt(ethers.keccak256(encoded)) >> 8n;
 }

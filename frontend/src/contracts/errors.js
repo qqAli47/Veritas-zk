@@ -113,6 +113,19 @@ const MESSAGES = {
     hint: 'Regenerate the proof against the current parameters.',
     action: 'regenerate',
   }),
+  RegionMaskMismatch: ([proven, required]) => ({
+    title: 'The region policy changed',
+    message:
+      `This proof was built against allowlist ${proven}, but the verifier now requires ` +
+      `${required}.`,
+    hint: 'Regenerate the proof — it only takes a moment.',
+    action: 'regenerate',
+  }),
+  RegionNotServed: () => ({
+    title: 'Not available in your region',
+    message: 'This resource does not serve the region set you verified under.',
+    hint: null,
+  }),
   InvalidProof: () => ({
     title: 'The verifier rejected this proof',
     message:
@@ -336,8 +349,9 @@ export function decodeProofError(err) {
     return wrap('CONSTRAINT_UNSATISFIED', {
       title: 'Your details do not satisfy the circuit',
       message:
-        'Either the age is below the required threshold, or the birth year and secret do not ' +
-        'match the commitment that was registered.',
+        'Either the age is below the required threshold, your region is not one the verifier ' +
+        'accepts, or the birth year, region and secret do not match the commitment that was ' +
+        'registered.',
       hint: 'Check your credential and try again.',
     });
   }

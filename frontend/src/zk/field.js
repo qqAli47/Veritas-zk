@@ -36,27 +36,38 @@ export function randomSecret() {
   return toField(v);
 }
 
+/** Where the region allowlist starts inside the packed word. */
+export const MASK_OFFSET = 192n;
+
+/** Width of the region allowlist. Must match N_REGIONS in the circuit. */
+export const REGION_CAPACITY = 61;
+
 /**
- * Pack the three policy-bound values into a single field element.
+ * Pack every policy-bound value into a single field element.
  *
  *   bits [  0.. 15]  threshold    uint16
  *   bits [ 16.. 31]  currentYear  uint16
  *   bits [ 32..191]  subject      uint160
+ *   bits [192..252]  regionMask   the allowlist
  *
- * One public signal instead of three saves roughly 12,300 gas per
- * verification, because Groth16 costs an elliptic-curve multiplication per
- * public input.
+ * Groth16 costs ~6,800 gas per public signal and the budget has under 3,000
+ * gas of headroom, so carrying these separately is not affordable. Packing
+ * them is what lets the location attribute cost zero extra public signals.
  */
-export function pack(subject, currentYear, threshold) {
+export function pack(subject, currentYear, threshold, regionMask = 0n) {
   const s = BigInt(subject);
   const y = BigInt(currentYear);
   const t = BigInt(threshold);
+  const m = BigInt(regionMask);
 
   if (s >= 1n << 160n) throw new RangeError('subject exceeds 160 bits');
   if (y >= 1n << 16n) throw new RangeError('currentYear exceeds 16 bits');
   if (t >= 1n << 16n) throw new RangeError('threshold exceeds 16 bits');
+  if (m >= 1n << BigInt(REGION_CAPACITY)) {
+    throw new RangeError(`regionMask exceeds ${REGION_CAPACITY} bits`);
+  }
 
-  return (s << 32n) | (y << 16n) | t;
+  return (m << MASK_OFFSET) | (s << 32n) | (y << 16n) | t;
 }
 
 export function unpack(packed) {
@@ -65,6 +76,7 @@ export function unpack(packed) {
     threshold: Number(p & 0xffffn),
     currentYear: Number((p >> 16n) & 0xffffn),
     subject: '0x' + ((p >> 32n) & ((1n << 160n) - 1n)).toString(16).padStart(40, '0'),
+    regionMask: p >> MASK_OFFSET,
   };
 }
 

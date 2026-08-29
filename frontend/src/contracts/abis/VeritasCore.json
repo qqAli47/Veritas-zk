@@ -44,6 +44,11 @@
               "internalType": "bool",
               "name": "paused",
               "type": "bool"
+            },
+            {
+              "internalType": "uint64",
+              "name": "allowedRegions",
+              "type": "uint64"
             }
           ],
           "internalType": "struct VeritasCore.Policy",
@@ -131,6 +136,22 @@
         }
       ],
       "name": "NullifierAlreadyUsed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint64",
+          "name": "proven",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "required",
+          "type": "uint64"
+        }
+      ],
+      "name": "RegionMaskMismatch",
       "type": "error"
     },
     {
@@ -287,6 +308,12 @@
           "internalType": "uint16",
           "name": "yearOverride",
           "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "allowedRegions",
+          "type": "uint64"
         }
       ],
       "name": "PolicyUpdated",
@@ -431,6 +458,11 @@
             {
               "internalType": "uint64",
               "name": "epoch",
+              "type": "uint64"
+            },
+            {
+              "internalType": "uint64",
+              "name": "regions",
               "type": "uint64"
             }
           ],
@@ -594,6 +626,59 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "user",
+          "type": "address"
+        },
+        {
+          "internalType": "uint16",
+          "name": "minAge",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint64",
+          "name": "required",
+          "type": "uint64"
+        }
+      ],
+      "name": "isVerifiedAtLeastInRegions",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "user",
+          "type": "address"
+        },
+        {
+          "internalType": "uint64",
+          "name": "required",
+          "type": "uint64"
+        }
+      ],
+      "name": "isVerifiedInRegions",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "nullifier",
           "type": "uint256"
@@ -658,6 +743,11 @@
           "internalType": "bool",
           "name": "paused",
           "type": "bool"
+        },
+        {
+          "internalType": "uint64",
+          "name": "allowedRegions",
+          "type": "uint64"
         }
       ],
       "stateMutability": "view",
@@ -686,6 +776,11 @@
           "internalType": "uint16",
           "name": "minAge",
           "type": "uint16"
+        },
+        {
+          "internalType": "uint64",
+          "name": "allowedRegions",
+          "type": "uint64"
         }
       ],
       "stateMutability": "view",
@@ -781,6 +876,11 @@
               "internalType": "bool",
               "name": "paused",
               "type": "bool"
+            },
+            {
+              "internalType": "uint64",
+              "name": "allowedRegions",
+              "type": "uint64"
             }
           ],
           "internalType": "struct VeritasCore.Policy",

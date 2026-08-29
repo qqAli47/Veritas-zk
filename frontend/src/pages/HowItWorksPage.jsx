@@ -73,12 +73,13 @@ export default function HowItWorksPage() {
             A circuit is a system of algebraic constraints. A proof exists only if every constraint
             is satisfiable, so each line below is a claim the prover cannot avoid making:
           </p>
-          <pre className="code-block mono">{`Poseidon(birthYear, secret) === commitment   // you hold a real credential
-Poseidon(secret, context)   === nullifier    // single-use, scoped to this context
+          <pre className="code-block mono">{`Poseidon(birthYear, region, secret) === commitment   // you hold a real credential
 birthYear                    < 2^16          // a genuine integer, not a wrapped field element
 birthYear                   <= currentYear   // no future birthdays
 currentYear - birthYear     >= threshold     // the actual claim
-packed                       < 2^192         // binds the beneficiary address`}</pre>
+packed                       < 2^253         // binds the beneficiary AND the region allowlist
+Poseidon(secret, context)   === nullifier    // single-use, scoped to this context
+maskBit[regionCode]         === 1            // you are in one of the permitted regions`}</pre>
           <p>
             The third line looks pedantic and is the most important. Circuit values are elements of
             a finite field, not integers. Without it, a prover could supply{' '}
