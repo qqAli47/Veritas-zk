@@ -15,9 +15,9 @@ const NAV = [
 ];
 
 const TITLES = {
-  '/': 'Veritas — Privacy-Preserving Age Verification',
+  '/': 'Veritas — Privacy-Preserving Attribute Verification',
   '/issuer': 'Issuer Console — Veritas',
-  '/prove': 'Prove Your Age — Veritas',
+  '/prove': 'Prove Your Attributes — Veritas',
   '/restricted': 'Restricted Area — Veritas',
   '/explorer': 'Explorer — Veritas',
   '/how-it-works': 'How Veritas Works',
@@ -146,7 +146,7 @@ export default function AppShell() {
       <footer className="app-footer">
         <p>
           Veritas-zk — a graduation project in privacy-preserving identity. Groth16 over BN254,
-          proofs generated in your browser.
+          proofs generated in your browser. Nothing you prove is ever disclosed.
         </p>
       </footer>
 

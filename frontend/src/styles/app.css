@@ -900,3 +900,136 @@ input:disabled {
     padding: var(--space-4) var(--space-3);
   }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   Element-level polish
+   ═══════════════════════════════════════════════════════════════════
+
+   Anything the design system never gave a rule falls back to the
+   browser default, which on a dark page means blue underlined links
+   and a black triangle for <details>. These are the leftovers.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Links ──────────────────────────────────────────────────────── */
+
+/* :not() keeps this away from links that are already buttons, nav items
+   or hash chips, all of which bring their own colour. */
+a:not(.btn):not(.nav-link):not(.brand):not(.role-card):not(.skip-link) {
+  color: var(--purple-light);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(167, 139, 250, 0.3);
+  transition: all var(--transition-fast);
+}
+
+a:not(.btn):not(.nav-link):not(.brand):not(.role-card):not(.skip-link):hover {
+  color: #c4b5fd;
+  border-bottom-color: var(--purple-light);
+}
+
+/* ─── Disclosure triangles ───────────────────────────────────────── */
+
+.disclosure summary,
+details.notice-details summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+/* Both spellings are needed: WebKit still uses the pseudo-element. */
+.disclosure summary::-webkit-details-marker,
+details.notice-details summary::-webkit-details-marker {
+  display: none;
+}
+.disclosure summary::marker,
+details.notice-details summary::marker {
+  content: '';
+}
+
+.disclosure summary::before,
+details.notice-details summary::before {
+  content: '';
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.disclosure[open] summary::before,
+details.notice-details[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.disclosure summary:hover,
+details.notice-details summary:hover {
+  color: var(--purple-light);
+}
+
+/* ─── Panel headings inside panels ───────────────────────────────── */
+
+.panel > :first-child {
+  margin-top: 0;
+}
+.panel > :last-child {
+  margin-bottom: 0;
+}
+
+/* ─── Field rows ─────────────────────────────────────────────────── */
+
+/* The reveal button must line up with the input, not stretch to the
+   height of the label above it. */
+.input-row {
+  align-items: stretch;
+}
+.input-row .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A form-group directly after a button needs breathing room. */
+.form-group .btn-sm {
+  margin-top: var(--space-2);
+}
+
+/* ─── Horizontal rules ───────────────────────────────────────────── */
+
+hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  margin: var(--space-5) 0;
+}
+
+/* ─── Tables: keep the header legible while scrolling sideways ───── */
+
+.table-scroll {
+  /* A faint edge tells the reader there is more to the right, which a
+     bare overflow container does not. */
+  background:
+    linear-gradient(90deg, var(--surface-elevated) 30%, rgba(26, 26, 46, 0)),
+    linear-gradient(90deg, rgba(26, 26, 46, 0), var(--surface-elevated) 70%) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%;
+  background-attachment: local, local;
+}
+
+/* ─── Selection inside code blocks ───────────────────────────────── */
+
+.code-block::selection,
+.mono::selection {
+  background: rgba(124, 58, 237, 0.4);
+}
+
+/* ─── Reduced motion: the dropzone must not jump ─────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .dropzone.is-dragging {
+    transform: none !important;
+  }
+}

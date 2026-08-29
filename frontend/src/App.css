@@ -3,6 +3,13 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 :root {
+  /*
+   * Tells the browser this page is dark, so OS-drawn UI follows: the <select>
+   * popup list, number spinners, scrollbars, autofill backgrounds and form
+   * validation bubbles. Without it those render light and look pasted on.
+   */
+  color-scheme: dark;
+
   --bg: #0a0a10;
   --bg-gradient: linear-gradient(135deg, #0a0a10 0%, #12101f 50%, #0a0a10 100%);
   --surface: #141420;
@@ -354,11 +361,9 @@ input::placeholder {
   color: var(--text-dim);
 }
 
-input[readonly] {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background: rgba(10, 10, 16, 0.5);
-}
+/* NOTE: the readonly/disabled appearance is defined once, in styles/app.css.
+   It deliberately avoids `opacity`, which drops the label to roughly 2:1
+   contrast and fails WCAG AA. */
 
 /* ─── Status Badge ───────────────────────────────────────────── */
 .status-badge {

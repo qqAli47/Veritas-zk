@@ -100,7 +100,7 @@ export default function RestrictedPage() {
           <p className="page-subtitle">
             {expired
               ? 'Your attestation has expired. Generate a fresh proof to regain access.'
-              : 'This area is gated by an on-chain age attestation, which this account does not hold.'}
+              : 'This area is gated by an on-chain attestation of age and location, which this account does not hold.'}
           </p>
           <div className="notice notice-info">
             <strong className="notice-title">The gate is on-chain</strong>
@@ -110,7 +110,7 @@ export default function RestrictedPage() {
             </p>
           </div>
           <button type="button" className="btn btn-primary btn-full" onClick={() => navigate('/prove')}>
-            Prove your age →
+            Prove your attributes →
           </button>
         </div>
       </div>
@@ -127,9 +127,9 @@ export default function RestrictedPage() {
             ✓
           </span>
           <div className="verified-text">
-            <h2 className="verified-title">Age verified — welcome</h2>
+            <h2 className="verified-title">Verified — welcome</h2>
             <p className="verified-subtitle">
-              Confirmed on-chain. Your birth date was never disclosed.
+              Confirmed on-chain. Neither your birth date nor your country was disclosed.
             </p>
           </div>
         </div>

@@ -8,7 +8,7 @@ import { SELECTABLE_REGIONS, groupedRegions, regionByBit } from '../zk/regions.j
 import { readRegistry, writeRegistry } from '../contracts/clients.js';
 import { decodeContractError } from '../contracts/errors.js';
 import { CONTRACTS, txUrl } from '../contracts/config.js';
-import { DataRow, ErrorPanel, Hash, Panel } from '../components/primitives.jsx';
+import { DataRow, ErrorPanel, Hash, Panel, Select } from '../components/primitives.jsx';
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -263,31 +263,23 @@ export default function IssuerPage() {
             />
           </div>
 
-          <div className="form-group">
-            <label className="label-private" htmlFor="region">
-              <span aria-hidden="true">🔒</span> Region of residence
-            </label>
-            <select
-              id="region"
-              value={regionBit}
-              onChange={(e) => setRegionBit(e.target.value)}
-              disabled={busy}
-            >
-              {groupedRegions().map(([group, regions]) => (
-                <optgroup key={group} label={group}>
-                  {regions.map((r) => (
-                    <option key={r.bit} value={r.bit}>
-                      {r.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            <p className="text-dim">
-              Attesting this is a heavier obligation than attesting a birth year — it needs proof
-              of address, not just a passport.
-            </p>
-          </div>
+          <Select
+            label="Region of residence"
+            value={regionBit}
+            onChange={(e) => setRegionBit(e.target.value)}
+            disabled={busy}
+            hint="Attesting this is a heavier obligation than attesting a birth year — it needs proof of address, not just a passport."
+          >
+            {groupedRegions().map(([group, regions]) => (
+              <optgroup key={group} label={group}>
+                {regions.map((r) => (
+                  <option key={r.bit} value={r.bit}>
+                    {r.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </Select>
 
           <div className="form-group">
             <label className="label-private" htmlFor="secret">

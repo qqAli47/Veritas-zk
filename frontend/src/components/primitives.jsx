@@ -2,8 +2,118 @@
  * Small presentational building blocks shared across pages.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import { shorten } from '../zk/field.js';
+
+/* ── Form controls ────────────────────────────────────────────────────────
+ *
+ * Native <select> and <input type="file"> cannot be styled into a dark theme
+ * on their own: the browser draws the dropdown arrow and the "Choose File"
+ * button itself. Both wrappers below take the same approach — strip the
+ * default appearance, then supply our own affordance — so they sit in the
+ * design system instead of next to it.
+ */
+
+/**
+ * A select that matches the text inputs.
+ *
+ * `appearance: none` removes the OS arrow so `.select-wrap::after` can draw
+ * one in the right colour. The dropdown list itself is drawn by the operating
+ * system and is not styleable — `color-scheme: dark` on :root is what makes it
+ * render dark rather than a jarring white panel.
+ */
+export function Select({ label, hint, children, ...props }) {
+  const id = useId();
+  return (
+    <div className="form-group">
+      {label && (
+        <label className="label-private" htmlFor={id}>
+          <span aria-hidden="true">🔒</span> {label}
+        </label>
+      )}
+      <div className="select-wrap">
+        <select id={id} {...props}>
+          {children}
+        </select>
+      </div>
+      {hint && <p className="field-hint">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * A drag-and-drop file field.
+ *
+ * The real <input type="file"> is kept in the DOM and focusable — only its
+ * paint is suppressed. Using `display: none` would take it out of the tab
+ * order and break keyboard access, which is the usual bug in hand-rolled
+ * upload widgets.
+ */
+export function Dropzone({ accept, onFile, disabled, title, hint, selectedName }) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+
+  const open = useCallback(() => {
+    if (!disabled) inputRef.current?.click();
+  }, [disabled]);
+
+  const onDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      setDragging(false);
+      if (disabled) return;
+      const file = e.dataTransfer?.files?.[0];
+      if (file) onFile(file);
+    },
+    [disabled, onFile],
+  );
+
+  return (
+    <div
+      className={`dropzone${dragging ? ' is-dragging' : ''}${disabled ? ' is-disabled' : ''}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!disabled) setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      onClick={open}
+      // A div is not focusable and announces nothing, so give it the button
+      // role and the keys a button would answer to.
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
+      aria-disabled={disabled || undefined}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        className="dropzone-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          // Reset, so choosing the same file twice still fires onChange.
+          e.target.value = '';
+        }}
+        aria-label={title}
+      />
+      <span className="dropzone-icon" aria-hidden="true">
+        {selectedName ? '📄' : '⬆'}
+      </span>
+      <span className="dropzone-title">
+        {selectedName ? selectedName : dragging ? 'Drop it here' : title}
+      </span>
+      {hint && !selectedName && <span className="dropzone-hint">{hint}</span>}
+    </div>
+  );
+}
 
 /* ── Hash chip with copy-to-clipboard ─────────────────────────────────────── */
 

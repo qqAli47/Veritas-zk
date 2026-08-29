@@ -19,10 +19,12 @@ import { readCore, readRegistry, writeCore } from '../contracts/clients.js';
 import { decodeContractError, decodeProofError } from '../contracts/errors.js';
 import {
   DataRow,
+  Dropzone,
   ErrorPanel,
   Hash,
   Panel,
   ProgressBar,
+  Select,
   Stepper,
 } from '../components/primitives.jsx';
 
@@ -265,11 +267,11 @@ export default function ProvePage() {
           <span className="page-title-icon" aria-hidden="true">
             🛡
           </span>
-          Prove your age
+          Prove your attributes
         </h2>
         <p className="page-subtitle">
-          Your birth year and secret never leave this browser. Only a proof and four public values
-          are sent anywhere.
+          Your birth year, region and secret never leave this browser. Only a proof and four
+          public values are sent anywhere.
         </p>
 
         <Stepper steps={STEPS} current={step} />
@@ -279,15 +281,12 @@ export default function ProvePage() {
         {step === 0 && (
           <section aria-label="Load your credential">
             <Panel title="Import a credential file">
-              <input
-                type="file"
+              <Dropzone
                 accept="application/json,.json"
-                onChange={(e) => onFile(e.target.files?.[0])}
-                aria-label="Credential JSON file"
+                onFile={onFile}
+                title="Drop your credential here, or click to browse"
+                hint="The .json file the issuer produced — it holds your birth year, region and secret"
               />
-              <p className="text-dim">
-                The file the issuer produced. It holds your birth year and secret.
-              </p>
             </Panel>
 
             <p className="or-divider">or enter the values directly</p>
@@ -306,26 +305,21 @@ export default function ProvePage() {
                   required
                 />
               </div>
-              <div className="form-group">
-                <label className="label-private" htmlFor="mRegion">
-                  <span aria-hidden="true">🔒</span> Region
-                </label>
-                <select
-                  id="mRegion"
-                  value={manualRegion}
-                  onChange={(e) => setManualRegion(e.target.value)}
-                >
-                  {groupedRegions().map(([group, regions]) => (
-                    <optgroup key={group} label={group}>
-                      {regions.map((r) => (
-                        <option key={r.bit} value={r.bit}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </div>
+              <Select
+                label="Region"
+                value={manualRegion}
+                onChange={(e) => setManualRegion(e.target.value)}
+              >
+                {groupedRegions().map(([group, regions]) => (
+                  <optgroup key={group} label={group}>
+                    {regions.map((r) => (
+                      <option key={r.bit} value={r.bit}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </Select>
 
               <div className="form-group">
                 <label className="label-private" htmlFor="mSecret">
@@ -471,7 +465,7 @@ export default function ProvePage() {
               {busy ? 'Waiting for confirmation…' : 'Verify on-chain'}
             </button>
             <p className="text-dim center">
-              This is a state-changing transaction (~297,000 gas) and needs a wallet signature.
+              This is a state-changing transaction (~297,300 gas) and needs a wallet signature.
             </p>
           </section>
         )}

@@ -7,21 +7,21 @@ const ROLES = [
     icon: '🏛',
     role: 'Authority',
     title: 'Issue a credential',
-    body: 'Stand in for a government registry: vouch for a birth year by publishing a commitment.',
+    body: 'Stand in for a government registry: vouch for a birth year and a region by publishing a single commitment.',
   },
   {
     to: '/prove',
     icon: '🧑',
     role: 'Citizen',
-    title: 'Prove your age',
-    body: 'Generate a zero-knowledge proof in your browser and submit it for verification.',
+    title: 'Prove your attributes',
+    body: 'Prove your age and location in your browser, revealing neither, then submit it.',
   },
   {
     to: '/restricted',
     icon: '🏪',
     role: 'Business',
     title: 'Gated content',
-    body: 'See an age-restricted resource that trusts the chain, not the interface.',
+    body: 'See a gated resource that trusts the chain, not the interface.',
   },
 ];
 
@@ -33,11 +33,11 @@ export default function HomePage() {
       <div className="card card-wide fade-in">
         <div className="card-header">
           <h1 className="logo">Veritas</h1>
-          <p className="tagline">Privacy-Preserving Age Verification</p>
+          <p className="tagline">Privacy-Preserving Attribute Verification</p>
           <p className="description">
-            Prove you are old enough — without revealing when you were born, who you are, or
-            anything else. A zero-knowledge proof, generated on your device and checked by a smart
-            contract.
+            Prove you are old enough, and that you are somewhere a service operates — without
+            revealing when you were born or where you live. A zero-knowledge proof, generated on
+            your device and checked by a smart contract.
           </p>
         </div>
 
@@ -83,7 +83,10 @@ export default function HomePage() {
             </span>
             <div>
               <strong>Private by construction</strong>
-              <p>Your birth year never leaves the browser — not encrypted, simply never sent.</p>
+              <p>
+                Your birth year and region never leave the browser — not encrypted, simply never
+                sent.
+              </p>
             </div>
           </div>
           <div className="feature-item">
@@ -92,7 +95,7 @@ export default function HomePage() {
             </span>
             <div>
               <strong>Fast</strong>
-              <p>A 761-constraint circuit proves in about a second on a laptop.</p>
+              <p>A 965-constraint circuit proves two attributes in about a second.</p>
             </div>
           </div>
           <div className="feature-item">

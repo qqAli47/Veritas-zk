@@ -22,11 +22,8 @@ const VERIFY_AGE_BUDGET = 300_000n;
 const EPOCH_SECONDS = 30 * 24 * 3600;
 const YEAR = 2026;
 
-// Region bits from circuits/regions.json.
-const FR = 10;
-const DE = 11;
-const IT = 15;
-const REGION = DE;
+// Region bit from circuits/regions.json: 11 = Germany.
+const REGION = 11;
 
 /*
  * The WIDEST realistic allowlist, not a convenient narrow one.

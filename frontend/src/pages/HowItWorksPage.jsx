@@ -30,9 +30,10 @@ export default function HowItWorksPage() {
             <div className="split-col split-good">
               <h4>Veritas</h4>
               <p>
-                You hand over a mathematical proof that the statement <em>&ldquo;my age is at
-                least 18&rdquo;</em> is true. The verifier can check it, and learns nothing else —
-                not your birth year, not your name, not even which credential you used.
+                You hand over a mathematical proof that the statements <em>&ldquo;my age is at
+                least 18&rdquo;</em> and <em>&ldquo;I am somewhere you serve&rdquo;</em> are true.
+                The verifier can check both, and learns nothing else —
+                not your birth year, not your country, not your name.
               </p>
             </div>
           </div>
@@ -44,14 +45,16 @@ export default function HowItWorksPage() {
           <ol className="flow-list">
             <li>
               <strong>Issue.</strong> You generate a random <em>secret</em> on your own device and
-              compute <code className="mono">commitment = Poseidon(birthYear, secret)</code>. The
+              compute{' '}
+              <code className="mono">commitment = Poseidon(birthYear, region, secret)</code>. The
               issuer receives only that commitment and publishes it. It never learns your secret —
               if it did, it could recognise every future verification you make.
             </li>
             <li>
               <strong>Prove.</strong> Your browser builds a Groth16 proof that you know a
-              <em> birthYear</em> and <em>secret</em> which both open the published commitment and
-              satisfy the age threshold. This takes about a second and happens entirely locally.
+              <em> birthYear</em>, a <em>region</em> and a <em>secret</em> which together open the
+              published commitment, satisfy the age threshold, and place you in one of the regions
+              the verifier serves. About a second, entirely local.
             </li>
             <li>
               <strong>Verify.</strong> The contract checks the proof with an elliptic-curve pairing,
@@ -97,6 +100,7 @@ maskBit[regionCode]         === 1            // you are in one of the permitted 
               <h4>Never leaves your device</h4>
               <ul>
                 <li>Your birth year</li>
+                <li>Your region</li>
                 <li>Your secret</li>
                 <li>The witness</li>
               </ul>
@@ -107,7 +111,7 @@ maskBit[regionCode]         === 1            // you are in one of the permitted 
                 <li>A commitment hash</li>
                 <li>A nullifier hash</li>
                 <li>The context identifier</li>
-                <li>The threshold and reference year</li>
+                <li>The threshold, reference year and region allowlist</li>
                 <li>Your wallet address</li>
               </ul>
             </div>
@@ -116,7 +120,7 @@ maskBit[regionCode]         === 1            // you are in one of the permitted 
 
         {/* ── Design decisions ───────────────────────────────────────── */}
         <section className="section">
-          <h3>Three decisions worth explaining</h3>
+          <h3>Four decisions worth explaining</h3>
 
           <div className="callout callout-info">
             <strong>Why every parameter is a public signal</strong>
@@ -138,6 +142,18 @@ maskBit[regionCode]         === 1            // you are in one of the permitted 
               cross-site tracking handle. Deriving it from{' '}
               <code className="mono">Poseidon(secret, context)</code> instead keeps it single-use
               within one relying party and one time period, while remaining unlinkable across them.
+            </p>
+          </div>
+
+          <div className="callout callout-info">
+            <strong>Why the region allowlist is pinned by equality, not by subset</strong>
+            <p>
+              A verifier states which regions it serves, and the proof must assert membership in
+              exactly that set. Allowing a <em>narrower</em> set would seem harmless and would be a
+              privacy hole: a malicious site could ask you to prove membership in a single country
+              — a perfectly valid proof — and learn precisely where you are, from a flow branded
+              &ldquo;zero-knowledge&rdquo;. Equality forces everyone into the same, largest
+              possible crowd.
             </p>
           </div>
 
