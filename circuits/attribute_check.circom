@@ -2,20 +2,19 @@ pragma circom 2.0.0;
 
 /*
  * ═══════════════════════════════════════════════════════════════════════════
- *  AttributeCheck v3 — Veritas-zk production circuit
+ *  AttributeCheck v4 — Veritas-zk production circuit
  * ═══════════════════════════════════════════════════════════════════════════
  *
- *  Proves, without revealing birthYear, region or secret, that the prover:
+ *  Proves, without revealing birthYear, regionCode or secret, that the prover:
  *
  *    1. knows the (birthYear, regionCode, secret) preimage of a commitment
  *       that a trusted issuer registered on-chain,
  *    2. is at least `threshold` years old as of `currentYear`,
- *    3. is located in one of the regions the verifier permits — WITHOUT
- *       revealing which one,
+ *    3. belongs to one of the regions permitted by the policy's `regionMask`,
  *    4. has not already used this credential in this verification context, and
  *    5. is proving on behalf of one specific beneficiary address.
  *
- *  ── PUBLIC SIGNAL LAYOUT (load-bearing — see the note at the bottom) ──────
+ *  ── PUBLIC SIGNAL LAYOUT (load-bearing — see note at the bottom) ──────────
  *
  *    [0] commitment   output   Poseidon(birthYear, regionCode, secret)
  *    [1] nullifier    output   Poseidon(secret, context)
@@ -32,57 +31,48 @@ pragma circom 2.0.0;
  *  It also removes a whole class of bug: there is no "supplied" commitment that
  *  could disagree with the computed one, because the circuit only ever computes.
  *
- *  ── Why everything is PACKED into one signal ─────────────────────────────
+ *  ── Why `subject`, `currentYear`, `threshold` and `regionMask` are PACKED ─
  *
- *  Groth16 on-chain verification costs ~6,800 gas per public signal. The
- *  budget has under 3,000 gas of headroom, so a FIFTH public signal for the
- *  region allowlist would break the project's <300,000 target.
+ *  Groth16 on-chain verification costs one ECMUL (~6,000 gas) per public
+ *  signal. Carrying these five as separate signals would cost ~24,500 gas more
+ *  than packing them into one 253-bit field element — the difference between
+ *  meeting and badly missing the project's <300,000 gas target.
  *
- *  Instead the allowlist rides in the spare bits of `packed`. The field is
- *  ~2^254 and 2^253 < p, so 253 bits are usable; subject(160) + year(16) +
- *  threshold(16) leaves exactly 61 for the region mask. Location therefore
- *  costs zero additional public signals.
- *
- *  The single Num2Bits(253) below does three jobs at once:
+ *  The single Num2Bits(253) below does four jobs at once:
  *    (a) range-checks currentYear and threshold to 16 bits each,
- *    (b) proves packed < 2^253 so the Solidity-side unpacking cannot truncate,
- *    (c) forces `packed` to participate in real constraints, which is what
- *        makes the proof cryptographically bound to the subject address.
+ *    (b) range-checks regionMask to 61 bits (capacity = N_REGIONS),
+ *    (c) proves packed < 2^253 so the Solidity-side unpacking cannot truncate,
+ *    (d) forces `packed` to participate in real constraints, which is what
+ *        makes the proof cryptographically bound to the subject address AND
+ *        the region policy. (A public input with no constraint has identity IC
+ *        points and Groth16 verification becomes independent of its value.)
  *
- *  Point (c) is not incidental. A public input that appears in NO constraint
- *  has A_i = B_i = C_i = 0, hence an identity IC point, and Groth16
- *  verification becomes completely independent of its value — the binding
- *  would be silently vacuous. (With separate signals you would need the
- *  classic `sq <== subject * subject` trick for exactly this reason.)
+ *  ── Why the region check uses a bit-selector and not a comparator ─────────
  *
- *  A 160-bit Ethereum address sits ~94 bits below the BN254 scalar field
- *  modulus, so no reduction, splitting or aliasing concern arises.
+ *  The policy's regionMask is a 61-bit bitmask where bit i = 1 means "region i
+ *  is permitted". Checking membership with a comparator would require sorting
+ *  or a Merkle tree. A bit-selector is O(N_REGIONS) constraints and is exact:
+ *  we extract bit `regionCode` from `regionMask` and assert it is 1.
  *
  *  ── Why Poseidon and not SHA-256 ─────────────────────────────────────────
  *
  *  Poseidon is arithmetisation-friendly: ~243 R1CS constraints per 2-input
- *  hash against tens of thousands for SHA-256. The entire circuit is ~770
- *  constraints, which keeps in-browser proving near a second.
+ *  hash against tens of thousands for SHA-256. The entire circuit is ~900
+ *  constraints, which keeps in-browser proving under two seconds.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 include "circomlib/circuits/poseidon.circom";
 include "circomlib/circuits/comparators.circom";
 include "circomlib/circuits/bitify.circom";
-include "circomlib/circuits/multiplexer.circom";
 
 /*
  *  MIN_BIRTH_YEAR — floor on a plausible birth year (defence in depth).
- *  MAX_AGE        — ceiling on a plausible age; together with the Num2Bits
- *                   on `age` this bounds the subtraction from both sides.
- *  N_REGIONS      — width of the allowlist mask. Must equal `capacity` in
- *                   circuits/regions.json, which the build script asserts.
+ *  MAX_AGE        — ceiling on a plausible age; together with Num2Bits(16)
+ *                   this bounds the subtraction from both sides.
+ *  N_REGIONS      — width of the region bitmask; must match field.js REGION_CAPACITY.
  */
 template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
-
-    // Where the region mask starts inside `packed`, just above
-    // subject(160) + currentYear(16) + threshold(16).
-    var MASK_OFFSET = 192;
 
     // ── Public outputs — occupy publicSignals[0] and [1] ──────────────────
     signal output commitment;
@@ -94,7 +84,7 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
 
     // ── Private inputs — never leave the prover's machine ─────────────────
     signal input birthYear;
-    signal input regionCode;
+    signal input regionCode; // the holder's region bit index (0..N_REGIONS-1)
     signal input secret;
 
     // ══════════════════════════════════════════════════════════════════════
@@ -102,17 +92,13 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     //
     //     bits [  0.. 15]  threshold    uint16
     //     bits [ 16.. 31]  currentYear  uint16
-    //     bits [ 32..191]  subject      uint160  (constrained, deliberately
-    //                                             not re-read in-circuit —
-    //                                             Solidity unpacks it)
-    //     bits [192..252]  regionMask   the allowlist, read below
-    //
-    //     253 is the widest safe Num2Bits: 2^253 < p < 2^254, so the map from
-    //     bit-strings to field elements stays injective. (This is exactly why
-    //     circomlib bolts an AliasCheck onto Num2Bits_strict at 254 and not
-    //     at 253.)
+    //     bits [ 32..191]  subject      uint160  (constrained, not re-read
+    //                                             in-circuit — Solidity unpacks)
+    //     bits [192..252]  regionMask   uint61   (N_REGIONS bits)
     // ══════════════════════════════════════════════════════════════════════
-    component packedBits = Num2Bits(253);
+    var PACKED_BITS = 32 + N_REGIONS + 160; // 192 + N_REGIONS = 253
+
+    component packedBits = Num2Bits(PACKED_BITS);
     packedBits.in <== packed;
 
     component thresholdNum = Bits2Num(16);
@@ -127,14 +113,64 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     threshold   <== thresholdNum.out;
     currentYear <== yearNum.out;
 
+    // Extract the regionMask (bits [192..192+N_REGIONS-1] of packed).
+    component regionMaskNum = Bits2Num(N_REGIONS);
+    for (var i = 0; i < N_REGIONS; i++) {
+        regionMaskNum.in[i] <== packedBits.out[192 + i];
+    }
+    signal regionMask;
+    regionMask <== regionMaskNum.out;
+
     // ══════════════════════════════════════════════════════════════════════
-    //  2. Range-check birthYear
+    //  2. Range-check regionCode
+    //
+    //     regionCode must be a valid bit index into the mask (0..N_REGIONS-1).
+    //     Num2Bits(7) proves it fits in 7 bits (< 128), so no wrap-around
+    //     can reach a "wrong" bit during the selector below.
+    // ══════════════════════════════════════════════════════════════════════
+    component regionCodeBits = Num2Bits(7); // 2^7 = 128 > N_REGIONS
+    regionCodeBits.in <== regionCode;
+
+    // ── Region membership: bit `regionCode` of `regionMask` must be 1 ────
+    //
+    //  Build a one-hot selector: selector[i] = 1 iff regionCode == i.
+    //  Multiply selector[i] by packedBits.out[192+i] to extract the bit.
+    //  Sum all products; the result is exactly the bit at position regionCode.
+    //
+    //  Soundness: if regionCode = k, exactly one selector[k] = 1. The others
+    //  are 0. So the sum = packedBits.out[192+k]. Asserting sum === 1 proves
+    //  the holder's region is permitted.
+    //
+    //  Note: building a full equality comparator for each i costs 2*N_REGIONS
+    //  IsZero components; a cheaper approach is possible but this is clear.
+
+    signal selectors[N_REGIONS];
+    signal products[N_REGIONS];
+
+    component eqs[N_REGIONS];
+    for (var i = 0; i < N_REGIONS; i++) {
+        eqs[i] = IsEqual();
+        eqs[i].in[0] <== regionCode;
+        eqs[i].in[1] <== i;
+        selectors[i] <== eqs[i].out;
+        products[i]  <== selectors[i] * packedBits.out[192 + i];
+    }
+
+    // Sum up all products. The sum equals the mask bit at regionCode.
+    signal regionBit;
+    var acc = 0;
+    for (var i = 0; i < N_REGIONS; i++) {
+        acc = acc + products[i];
+    }
+    regionBit <== acc;
+    regionBit === 1;
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  3. Range-check birthYear
     //
     //     Circuit signals are BN254 field elements, not integers. Without
     //     this, a prover could submit birthYear = p - X so that
-    //     currentYear - birthYear wraps to any age they like. This is the
-    //     real soundness hole in the v1 circuit — a wider comparator alone
-    //     would not have fixed it.
+    //     currentYear - birthYear wraps to any age they like.
     // ══════════════════════════════════════════════════════════════════════
     component birthYearBits = Num2Bits(16);
     birthYearBits.in <== birthYear;
@@ -145,12 +181,10 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     birthYearFloor.out === 1;
 
     // ══════════════════════════════════════════════════════════════════════
-    //  3. Age, bounded from both sides
+    //  4. Age, bounded from both sides
     //
     //     If birthYear > currentYear then age = p - k, which is astronomically
     //     larger than 2^16, so Num2Bits(16) has no satisfying witness.
-    //     Negative ages are therefore unrepresentable rather than merely
-    //     discouraged.
     // ══════════════════════════════════════════════════════════════════════
     signal age;
     age <== currentYear - birthYear;
@@ -164,11 +198,7 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     ageCeiling.out === 1;
 
     // ══════════════════════════════════════════════════════════════════════
-    //  4. The claim itself: age >= threshold
-    //
-    //     Both operands are now proven < 2^16, which is exactly
-    //     GreaterEqThan's soundness precondition (its internal Num2Bits(17)
-    //     then sees at most 131,071 < 2^17).
+    //  5. The age claim: age >= threshold
     // ══════════════════════════════════════════════════════════════════════
     component isOldEnough = GreaterEqThan(16);
     isOldEnough.in[0] <== age;
@@ -176,54 +206,11 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     isOldEnough.out === 1;
 
     // ══════════════════════════════════════════════════════════════════════
-    //  5. The location claim: regionCode is in the verifier's allowlist
+    //  6. Commitment opening — Poseidon(birthYear, regionCode, secret)
     //
-    //     This is private set membership. The verifier learns "the holder is
-    //     in one of the permitted regions" and NOT which one — exactly as it
-    //     learns "at least 18" and not the birth year.
-    //
-    //     Decoder gives a one-hot vector over regionCode. For each i it emits
-    //     `out[i] * (inp - i) === 0`, so every out[i] with i != regionCode is
-    //     forced to zero, while out[regionCode] is left free; `success` is
-    //     their sum, constrained boolean. Pinning success to 1 therefore pins
-    //     out[regionCode] to 1 and the vector is exactly one-hot.
-    //
-    //     If regionCode were out of range, EVERY out[i] would be forced to
-    //     zero and success would be 0 — so the range check comes for free.
-    //     `success === 1` below is defence in depth: the membership constraint
-    //     alone would already reject it, because the dot product would be 0.
-    // ══════════════════════════════════════════════════════════════════════
-    component regionDecoder = Decoder(N_REGIONS);
-    regionDecoder.inp <== regionCode;
-    regionDecoder.success === 1;
-
-    /*
-     *  The intermediate `hit` signals are not stylistic. An R1CS constraint is
-     *  (linear) x (linear) = (linear), so a bare
-     *      sum_i( out[i] * maskBit[i] ) === 1
-     *  is a sum of 61 distinct products and will not compile — circom rejects
-     *  it as a non-quadratic constraint. Each product needs its own signal.
-     */
-    signal hit[N_REGIONS];
-    var allowed = 0;
-    for (var i = 0; i < N_REGIONS; i++) {
-        hit[i] <== regionDecoder.out[i] * packedBits.out[MASK_OFFSET + i];
-        allowed += hit[i];
-    }
-
-    // One-hot times booleans collapses to exactly maskBit[regionCode].
-    allowed === 1;
-
-    // ══════════════════════════════════════════════════════════════════════
-    //  6. Commitment opening
-    //
-    //     Ties the proof to a credential the issuer actually issued. Without
-    //     it the range checks prove nothing about a *real* person: a prover
-    //     could simply invent a convenient birthYear and region.
-    //
-    //     The region is INSIDE the commitment, which is what stops a holder
-    //     self-asserting their location. Poseidon(3) costs 264 constraints
-    //     against Poseidon(2)'s 243 — 21 more for a whole extra attribute.
+    //     Three-input: adding regionCode to the preimage means an issuer
+    //     can never register a commitment that works for a region different
+    //     from the one they vouched for during issuance.
     // ══════════════════════════════════════════════════════════════════════
     component commitmentHasher = Poseidon(3);
     commitmentHasher.inputs[0] <== birthYear;
@@ -232,20 +219,7 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
     commitment <== commitmentHasher.out;
 
     // ══════════════════════════════════════════════════════════════════════
-    //  7. Context-scoped nullifier
-    //
-    //     Poseidon(secret, context) rather than a bare Poseidon(secret, secret):
-    //
-    //       * Within one context it is deterministic, so the contract can
-    //         store it and reject a replay.
-    //       * Across contexts — a different relying party, a different chain,
-    //         or a later epoch of the same app — it changes, so the credential
-    //         stays usable over its lifetime and its uses are not linkable to
-    //         one another.
-    //
-    //     A context-independent nullifier would burn the credential forever on
-    //     first use AND act as a permanent cross-site tracking handle, which
-    //     would defeat the very privacy property this project exists to build.
+    //  7. Context-scoped nullifier — Poseidon(secret, context)
     // ══════════════════════════════════════════════════════════════════════
     component nullifierHasher = Poseidon(2);
     nullifierHasher.inputs[0] <== secret;
@@ -260,7 +234,8 @@ template AttributeCheck(MIN_BIRTH_YEAR, MAX_AGE, N_REGIONS) {
  *  order). Everything downstream — the generated verifier's uint[4] argument,
  *  VeritasCore's PUB_* constants, the frontend's calldata builder — indexes
  *  this layout. scripts/zk/build.mjs records the observed order in
- *  circuits/public_signals.json and the test suite asserts against it, so the
- *  ordering is verified rather than assumed.
+ *  circuits/public_signals.json and the test suite asserts against it.
+ *
+ *  N_REGIONS = 61 matches field.js REGION_CAPACITY and the regions.json count.
  */
 component main { public [context, packed] } = AttributeCheck(1900, 130, 61);

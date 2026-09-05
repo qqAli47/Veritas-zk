@@ -40,6 +40,30 @@ const CIRCUIT = "attribute_check";
 const FORCE = process.argv.includes("--force");
 
 /*
+ * Resolve the circom 2.x binary.
+ *
+ * On Windows, run.bat downloads the compiler to C:\circom\circom.exe.
+ * On macOS/Linux, run.sh places it at ~/.circom/circom.
+ * We try those known locations first before falling back to whatever `circom`
+ * resolves to on PATH — which is often the old npm-installed 0.5.46 binary
+ * and would fail with a parse error on circom 2 syntax.
+ */
+function resolveCircom() {
+  const candidates =
+    process.platform === "win32"
+      ? ["C:\\circom\\circom.exe"]
+      : [path.join(process.env.HOME ?? "", ".circom", "circom")];
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  // Fall back to PATH — will work if the user installed a v2 binary globally.
+  return "circom";
+}
+
+const CIRCOM = resolveCircom();
+
+/*
  * Powers of Tau, phase 1.
  *
  * We deliberately use the Hermez "perpetual powers of tau" transcript rather
@@ -79,13 +103,17 @@ const warn = (msg) => console.log(`      ${C.yellow("!")} ${msg}`);
  * `capture: true` returns stdout instead of streaming it, which we use to read
  * circom's constraint report.
  */
-function run(cmd, args, label, { capture = false } = {}) {
+function run(cmd, args, label, { capture = false, shell } = {}) {
   info(`> ${cmd} ${args.join(" ")}`);
+  // Use shell mode only for PATH-resolved commands (e.g. "npx", "snarkjs").
+  // For absolute binary paths (e.g. C:\circom\circom.exe) shell mode is not
+  // needed and can cause quoting issues on Windows.
+  const useShell = shell ?? (process.platform === "win32" && !path.isAbsolute(cmd));
   const res = spawnSync(cmd, args, {
     stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit",
     encoding: "utf8",
     cwd: ROOT,
-    shell: process.platform === "win32",
+    shell: useShell,
   });
   if (res.error) throw res.error;
   if (res.status !== 0) {
@@ -144,7 +172,7 @@ async function main() {
   // circom reports the constraint breakdown on stdout; snarkjs's `r1cs info`
   // only gives a combined total, so we take the numbers from the compiler.
   const circomOut = run(
-    "circom",
+    CIRCOM,
     [
       `circuits/${CIRCUIT}.circom`,
       "--r1cs",

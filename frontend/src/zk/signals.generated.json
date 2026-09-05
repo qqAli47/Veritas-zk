@@ -14,13 +14,13 @@
     "packed": 3
   },
   "stats": {
-    "nonLinearConstraints": 965,
-    "linearConstraints": 635,
+    "nonLinearConstraints": 1033,
+    "linearConstraints": 697,
     "publicInputs": 2,
     "publicOutputs": 2,
     "privateInputs": 3,
-    "wires": 1595
+    "wires": 1725
   },
-  "r1csSha256": "1d930544635fb30a91a14828f0e08de475f507ffb0a182eb8e84b7ba5a4ffa99",
-  "generatedAt": "2026-08-29T13:42:50.950Z"
+  "r1csSha256": "a99e3d4f13861b7a49a542aee0b95b4dffcba0f9011508399a80b1167fb4ebd2",
+  "generatedAt": "2026-09-05T14:21:32.092Z"
 }
