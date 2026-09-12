@@ -119,29 +119,58 @@ export default function RestrictedPage() {
 
   const validUntil = new Date(Number(state.attestation.validUntil) * 1000);
 
+  const regionCount = anonymitySetSize(state.attestation.regions);
+
   return (
     <div className="page page-wide">
       <div className="card card-wide fade-in">
-        <div className="verified-banner" role="status">
-          <span className="verified-icon" aria-hidden="true">
-            ✓
-          </span>
+
+        {/* ── Big verified banner ───────────────────────────────────── */}
+        <div className="verified-banner-v2" role="status">
+          <div className="verified-glow" aria-hidden="true" />
+          <span className="verified-check" aria-hidden="true">✓</span>
           <div className="verified-text">
-            <h2 className="verified-title">Verified — welcome</h2>
-            <p className="verified-subtitle">
-              Confirmed on-chain. Neither your birth date nor your country was disclosed.
+            <h2 className="verified-title-v2">Identity Verified</h2>
+            <p className="verified-subtitle-v2">
+              Zero-knowledge proof accepted on-chain. Age confirmed. Location confirmed.
+              Birth year: not disclosed. Country: not disclosed.
             </p>
           </div>
         </div>
 
-        <Panel title="Attestation">
+        {/* ── What was proven ───────────────────────────────────────── */}
+        <div className="proven-grid">
+          <div className="proven-card proven-card-age">
+            <span className="proven-card-icon" aria-hidden="true">🎂</span>
+            <strong className="proven-card-label">Age</strong>
+            <span className="proven-card-value">{String(state.attestation.minAge)}+ years</span>
+            <span className="proven-card-note">Threshold met — exact year withheld</span>
+          </div>
+          <div className="proven-card proven-card-region">
+            <span className="proven-card-icon" aria-hidden="true">🌍</span>
+            <strong className="proven-card-label">Location</strong>
+            <span className="proven-card-value">1 of {regionCount} regions</span>
+            <span className="proven-card-note">Membership proven — which region withheld</span>
+          </div>
+          <div className="proven-card proven-card-gas">
+            <span className="proven-card-icon" aria-hidden="true">⛽</span>
+            <strong className="proven-card-label">Gas used</strong>
+            <span className="proven-card-value">
+              {receipt ? Number(receipt.gasUsed).toLocaleString() : '~297k'}
+            </span>
+            <span className="proven-card-note">of a 300,000 gas budget</span>
+          </div>
+        </div>
+
+        {/* ── Attestation details ───────────────────────────────────── */}
+        <Panel title="On-chain attestation">
           <dl className="proof-dl">
             <DataRow label="Account">
               <Hash value={address} label="address" />
             </DataRow>
             <DataRow label="Proven age">{String(state.attestation.minAge)}+</DataRow>
-            <DataRow label="Proven region">
-              1 of {anonymitySetSize(state.attestation.regions)}{' '}
+            <DataRow label="Anonymity set">
+              1 of {regionCount}{' '}
               <span className="text-dim">({describeMask(state.attestation.regions)})</span>
             </DataRow>
             <DataRow label="Valid until">{validUntil.toLocaleString()}</DataRow>
@@ -161,17 +190,34 @@ export default function RestrictedPage() {
           </dl>
         </Panel>
 
+        {/* ── Gated content ─────────────────────────────────────────── */}
         <div className="platform-content panel">
-          <h3 className="platform-content-title">Age-restricted content</h3>
+          <h3 className="platform-content-title">🔓 You are through the gate</h3>
           <p className="platform-content-body">
-            You are through the gate. A relying party learned exactly one fact about you — that you
-            are old enough, and that you are somewhere in the regions it serves. Nothing else.
-            No birth date, no country, no document, no identity.
+            Access was decided by a single contract call:{' '}
+            <code className="mono">VeritasCore.isVerified(address)</code>. There is no
+            client-side flag to flip, no session to forge, no interface bypass. The gate is
+            the blockchain itself.
           </p>
-          <div className="platform-features">
-            <div className="feature-chip">🔐 Nothing revealed</div>
-            <div className="feature-chip">⛓ Verified on-chain</div>
-            <div className="feature-chip">🛡 Zero knowledge</div>
+          <div className="privacy-summary">
+            <div className="privacy-summary-col privacy-summary-revealed">
+              <strong>What the contract learned</strong>
+              <ul>
+                <li>✓ Age is {String(state.attestation.minAge)} or older</li>
+                <li>✓ Location is in {regionCount} permitted region{regionCount !== 1 ? 's' : ''}</li>
+                <li>✓ Credential is registered and unrevoked</li>
+                <li>✓ This proof has not been used before</li>
+              </ul>
+            </div>
+            <div className="privacy-summary-col privacy-summary-withheld">
+              <strong>What was never disclosed</strong>
+              <ul>
+                <li>✗ Exact birth year</li>
+                <li>✗ Exact region</li>
+                <li>✗ Your secret</li>
+                <li>✗ Any document or identifier</li>
+              </ul>
+            </div>
           </div>
         </div>
 
