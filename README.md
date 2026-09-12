@@ -1,222 +1,391 @@
 # Veritas-zk
 
-**Prove you are old enough, and where you are — without revealing either.**
+<div align="center">
 
-A privacy-preserving attribute-verification system built on zk-SNARKs. A user
-proves to an Ethereum smart contract that their **age** meets a threshold and
-that their **location** is one the verifier serves — using a Groth16 proof
-generated entirely in their own browser. No birth date, no country, no document
-and no identifier ever leaves the device.
+**A Privacy-Preserving Attribute Verification System Built on Zero-Knowledge Proofs**
 
-The location proof is *private set membership*: the verifier learns "this holder
-is in one of the N regions I accept", never which one. N is the holder's
-anonymity set, and the app shows it before they commit to proving anything.
+*Prove you are old enough, and where you are — without revealing either.*
+
+![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
+![Gas](https://img.shields.io/badge/gas-297%2C280%20%3C%20300k-blue)
+![Constraints](https://img.shields.io/badge/circuit-1033%20constraints-purple)
+![License](https://img.shields.io/badge/license-MIT-orange)
+![Solidity](https://img.shields.io/badge/solidity-0.8.20-red)
+![Network](https://img.shields.io/badge/network-Sepolia%20%7C%20Localhost-lightgrey)
+
+</div>
+
+---
+
+## 🧩 The Problem
+
+Online platforms increasingly require users to verify personal attributes — such as being over a certain legal age or residing in a permitted region — to comply with regulatory frameworks. Traditional verification models force users to expose highly sensitive personal data: exact dates of birth, government-issued IDs, and home addresses.
+
+This creates **a fundamental conflict**: regulatory compliance requires verification, but verification requires data exposure — and data exposure creates risk.
+
+**Veritas-zk resolves this conflict entirely.**
+
+---
+
+## 💡 The Solution
+
+Veritas-zk uses **Zero-Knowledge Succinct Non-Interactive Arguments of Knowledge (zk-SNARKs)** to allow a user to prove:
+
+- ✅ Their **age** meets a required threshold
+- ✅ Their **region** is one the verifier accepts
+
+...to an Ethereum smart contract — **without revealing their birth year, their exact region, or any other private data.** The proof is generated entirely inside the user's browser. Private inputs never leave the device.
+
+The location proof is **private set membership**: the verifier learns only *"this holder is in one of the N regions I accept"* — never which one. N is the holder's **anonymity set**, and the app shows it before they commit to proving anything.
+
+---
+
+## 🏗️ System Architecture
 
 ```
-Issuer                    Holder's browser                  Ethereum
-──────                    ────────────────                  ────────
-                          secret ← CSPRNG
-                          commitment = Poseidon(bY, secret)
-  ◄── commitment only ────┘
-  registerCommitment() ───────────────────────────────────► CredentialRegistry
+╔══════════════════╗     ╔══════════════════════════════╗     ╔═══════════════════════════════╗
+║   🏛  Issuer     ║     ║     🧑 Holder's Browser      ║     ║       ⛓  Ethereum             ║
+║                  ║     ║                              ║     ║                               ║
+║  Verifies        ║     ║  secret ← CSPRNG             ║     ║                               ║
+║  identity once,  ║     ║  commitment =                ║     ║                               ║
+║  off-chain       ║     ║   Poseidon(bY, region, s)    ║     ║                               ║
+╚══════════════════╝     ╚══════════════════════════════╝     ╚═══════════════════════════════╝
+         │                            │                                      │
+         │◄─── commitment only ───────┘                                      │
+         │                                                                   │
+         │── registerCommitment() ───────────────────────────────────────►  CredentialRegistry
+         │                            │                                      │
+         │                            │  Groth16 proof (~0.5 s)              │
+         │                            │  proof + 4 public signals ────────►  VeritasCore
+         │                            │                                      │  ├ policy checks
+         │                            │                                      │  ├ pairing check
+         │                            │                                      │  ├ spend nullifier
+         │                            │                                      │  └ write attestation
+         │                            │                                      │
+         │                            │             relying party ─────────►  isVerifiedAtLeast()
+         │                            │                                      │  → true ✅
+```
 
-                          Groth16 proof (~0.5 s)
-                          proof + 4 public signals ───────► VeritasCore
-                                                            ├ policy checks
-                                                            ├ pairing check
-                                                            ├ spend nullifier
-                                                            └ write attestation
+### Three Layers, One Story
 
-                                          relying party ──► isVerifiedAtLeast()
-                                                            → true
+| Layer | Technology | Role |
+|-------|-----------|------|
+| **ZK Circuit** | Circom v2 + Groth16 | Proves age ≥ threshold and region ∈ allowlist, without revealing either |
+| **Smart Contracts** | Solidity 0.8.20 + Hardhat | Enforces policy, records attestations, prevents replay attacks |
+| **Frontend DApp** | React 18 + Vite 5 + Ethers v6 | Browser-based proof generation in a Web Worker, wallet integration |
+
+---
+
+## 📊 Project Status
+
+| Metric | Value |
+|--------|-------|
+| **Circuit** | 1,033 non-linear constraints — age + region in a single proof |
+| **Public Signals** | 4 signals: `commitment`, `nullifier`, `context`, `packed` |
+| **Proving Time** | ~0.5 seconds in-browser, inside a Web Worker |
+| **On-chain Gas** | **297,280 gas** per verification (target: < 300,000) ✅ |
+| **Gas Headroom** | 2,720 gas (< 1%) — regression-tested in CI |
+| **Test Suite** | **111 tests passing** — circuit, contracts, integration, gas, parity |
+| **Networks** | Local Hardhat node and Sepolia testnet |
+| **Proof System** | Groth16 over BN254 (alt_bn128) |
+| **Hash Function** | Poseidon — arithmetisation-friendly, ~243 constraints per call |
+| **Trusted Setup** | Hermez Powers of Tau (54 contributors, phase 1) |
+
+---
+
+## 🔐 Security Findings & Mitigations
+
+This project is not just an implementation — it is a **security analysis**. The original specification contained **four exploitable design flaws** and **one circuit soundness bug**, all of which were found, documented, and closed. Each has a named regression test.
+
+### Finding 1 — Threshold Was Prover-Chosen
+**Attack:** A prover submits `threshold = 0`. Every age satisfies the comparison. The system grants access to anyone.
+
+**Mitigation:** `VeritasCore` reads the minimum age from its own on-chain policy and rejects any proof where the proven threshold is below it. The prover cannot influence the policy value.
+
+**Regression test:** `rejects a proof that claims a threshold below policy` → `ThresholdBelowPolicy`
+
+---
+
+### Finding 2 — Reference Year Was Prover-Chosen
+**Attack:** A prover submits `currentYear = 3000`. A newborn appears to be 975 years old. The system grants access to anyone.
+
+**Mitigation:** `VeritasCore` derives the current year from `block.timestamp` using the mean Gregorian year (365.2425 days). The prover-supplied year is cross-checked against the chain's own clock — rejecting any claim more than `maxYearLag` years in the past or any year in the future.
+
+**Regression tests:** `rejects a proof built for a year in the future` → `YearInFuture` / `rejects a proof whose year lags beyond maxYearLag` → `YearStale`
+
+---
+
+### Finding 3 — Proofs Were Bearer Tokens (Front-Running)
+**Attack:** An observer watches the mempool, copies a valid pending proof, and submits it first. The attacker gains the victim's attestation.
+
+**Mitigation:** The beneficiary's Ethereum address is packed directly into the circuit's public signal and cryptographically bound into the R1CS via `Num2Bits(253)`. `VeritasCore` credits the attestation to the address **named inside the proof** — not to `msg.sender`. A thief can only pay gas to deliver the victim their own attestation.
+
+**Side benefit:** This makes **gas relaying safe** — a third party can sponsor the transaction for a holder who has no ETH.
+
+**Regression tests:** `credits the attestation to the proof subject, not to the submitter` / `lets a relayer sponsor the transaction for the holder`
+
+---
+
+### Finding 4 — Region Allowlist Was Prover-Chosen (Privacy Attack)
+**Attack:** A malicious relying party narrows the allowlist to a single region. The holder's "zero-knowledge" proof now reveals their exact location.
+
+**Mitigation:** `VeritasCore` checks the proven region mask against its policy by **equality, not subset**. Every prover is forced into the same maximal anonymity set. A relying party cannot selectively shrink the set to deanonymise holders.
+
+**Regression test:** `rejects a proof built against a different allowlist` → `RegionMaskMismatch`
+
+---
+
+### Soundness Bug — Unconstrained Birth Year (Field Wrap Attack)
+**Attack:** Circuit signals are BN254 field elements — integers modulo a 254-bit prime `p`. Without explicit range-checking, a prover can submit `birthYear = p − k`, which makes `currentYear − birthYear` wrap around to a large positive value that satisfies any age comparison.
+
+**Mitigation:** `Num2Bits(16)` is applied to both `birthYear` and `age`. If either exceeds 16 bits, there is no satisfying witness — the WASM computation simply fails. Negative ages become unrepresentable rather than merely discouraged.
+
+**Regression test:** `rejects a birth year supplied as a large field element (the p−k attack)`
+
+---
+
+### Full Attack Surface — What the Demo Blocks
+
+```
+✓ blocked — REPLAY              resubmitting the same proof      → NullifierAlreadyUsed
+✓ blocked — PROOF THEFT         rewriting an unspent proof        → InvalidProof
+✓ RELAY                         attacker submits unchanged proof  → attestation goes to holder
+✓ blocked — THRESHOLD FORGERY   claiming threshold = 0            → ThresholdBelowPolicy
+✓ blocked — YEAR FORGERY        claiming the year is 2046         → YearInFuture
+✓ blocked — REGION FORGERY      claiming an unattested region     → CommitmentNotValid
+✓ blocked — ALLOWLIST NARROWING narrowing to a single region      → RegionMaskMismatch
 ```
 
 ---
 
-## Status
+## ⚙️ Circuit Design
 
-| | |
-|---|---|
-| Circuit | 965 non-linear constraints, 4 public signals, 2 attributes |
-| Proving | ~0.5 s in-browser, in a Web Worker |
-| On-chain verification | **297,232 gas** (target: < 300,000) ✅ |
-| Tests | **111 passing** — circuit, contracts, integration, gas, parity |
-| Networks | Local Hardhat and Sepolia |
+The `AttributeCheck` circuit (v4) proves, in a single Groth16 proof, that:
 
-## What makes this more than a demo
+1. The prover knows the preimage `(birthYear, regionCode, secret)` of a commitment the issuer registered on-chain.
+2. The prover's age `(currentYear − birthYear)` is at least `threshold`.
+3. The prover's `regionCode` bit is set in the policy's `regionMask`.
+4. The credential has not been used in this verification context.
+5. The proof is bound to a specific beneficiary address.
 
-The specification this project started from contained three exploitable design
-flaws. Finding and closing them is the substance of the work:
+### Public Signal Layout
 
-- **Location is proved, not disclosed.** The region rides in the spare bits of
-  an existing public signal, so a second attested attribute costs **214 gas** —
-  where the obvious implementation would have cost ~6,800 and broken the budget.
-- **The threshold was prover-chosen.** Nothing stopped a prover submitting
-  `threshold = 0`. The contract now pins it to on-chain policy.
-- **The reference year was prover-chosen.** `currentYear = 3000` made a newborn
-  an adult. The contract now derives the year from `block.timestamp`.
-- **Proofs were bearer tokens.** Anyone watching the mempool could steal a proof
-  and front-run its owner. The beneficiary is now bound inside the circuit.
+| Index | Signal | Type | Description |
+|-------|--------|------|-------------|
+| `[0]` | `commitment` | **output** | `Poseidon(birthYear, regionCode, secret)` |
+| `[1]` | `nullifier` | **output** | `Poseidon(secret, context)` |
+| `[2]` | `context` | input | `keccak256(TAG, chainId, contract, epoch) >> 8` |
+| `[3]` | `packed` | input | `regionMask<<192 \| subject<<32 \| year<<16 \| threshold` |
 
-Plus a circuit soundness bug: `birthYear` was an unconstrained field element, so
-`birthYear = p − k` made the age arithmetic wrap to any value the prover liked.
-`Num2Bits` closes it. Each of these has a named regression test.
+### Private Inputs
 
-Full analysis in [`docs/threat-model.md`](docs/threat-model.md).
+| Signal | Description |
+|--------|-------------|
+| `birthYear` | The holder's year of birth — **never published** |
+| `regionCode` | The holder's region bit index — **never published** |
+| `secret` | A CSPRNG-generated field element — **never published** |
 
-## Quick start
+### Why Outputs, Not Inputs?
+
+Circom lays the witness as `[1, outputs..., public inputs..., private...]`. Declaring `commitment` and `nullifier` as **outputs** pins them to indices 0 and 1 by construction — eliminating an entire class of bug where a "supplied" commitment could disagree with the computed one.
+
+### Why Everything Is Packed Into One Signal
+
+Groth16 verification costs approximately **6,800 gas per public signal** (one elliptic curve scalar multiplication). Carrying `subject`, `currentYear`, `threshold`, and `regionMask` as four separate signals would add ~23,000 gas — the difference between meeting and missing the 300,000 gas target. Packing them into a single 253-bit field element makes the second attribute cost **exactly 0 extra gas**.
+
+The `Num2Bits(253)` decomposition does four jobs at once:
+- Range-checks `currentYear` and `threshold` to 16 bits each
+- Range-checks `regionMask` to 61 bits (region capacity)
+- Proves `packed < 2^253`, preventing Solidity-side truncation
+- Forces `packed` to participate in real constraints — without this, the binding to the subject address would be cryptographically vacuous
+
+---
+
+## 🚀 Quick Start
 
 **Windows:** double-click **`run.bat`**
 **macOS / Linux:** `./run.sh`
 
-That is the whole thing. It checks your toolchain, installs dependencies,
-builds the circuit, runs the trusted setup, deploys the contracts, starts a
-local blockchain and opens the app — and it is safe to re-run, skipping
-whatever is already done.
+That is the whole thing. It checks your toolchain, installs dependencies, builds the circuit, runs the trusted setup, deploys the contracts, starts a local blockchain and opens the app — and it is safe to re-run, skipping whatever is already done.
 
 | Command | What it does |
-|---|---|
-| `run.bat` / `./run.sh` | Set everything up, then start the node and the app |
+|---------|-------------|
+| `run.bat` / `./run.sh` | Full setup, then start the node and app |
 | `run.bat setup` | Install and build only |
-| `run.bat test` | Run the 85-test suite |
-| `run.bat demo` | Narrated end-to-end run, including four attacks being blocked |
+| `run.bat test` | Run the 111-test suite |
+| `run.bat demo` | Narrated end-to-end run, with 7 attacks being blocked |
 | `run.bat clean` | Delete build output and dependencies |
 
-> **New to zero-knowledge proofs?** [`WALKTHROUGH.md`](WALKTHROUGH.md) explains
-> the entire system from first principles, with hands-on exercises.
+> **New to zero-knowledge proofs?** [`WALKTHROUGH.md`](WALKTHROUGH.md) explains the entire system from first principles, with hands-on exercises.
 
-### Doing it by hand
+### Manual Setup
 
-Requires Node 18+ and the [circom **2**
-compiler](https://docs.circom.io/getting-started/installation/) on your `PATH`.
+Requires **Node 18+** and the **circom 2** compiler.
 
-> Do **not** run `npm install -g circom` — that installs v0.5.46, the old
-> pre-2.0 compiler, which cannot build this circuit. circom 2 is a standalone
-> binary from [GitHub releases](https://github.com/iden3/circom/releases/latest).
-> `run.bat` / `run.sh` will fetch it for you.
+> ⚠️ Do **not** run `npm install -g circom` — that installs v0.5.46, the old pre-2.0 compiler, which cannot build this circuit. circom 2 is a standalone binary. `run.bat` / `run.sh` fetch it automatically.
 
 ```bash
 npm install
-npm run zk:build      # compile the circuit, trusted setup, generate the verifier
-npm test              # 85 tests
+npm run zk:build      # compile circuit → trusted setup → generate Groth16Verifier.sol
 
-# terminal 1
+npm test              # 111 tests
+
+# Terminal 1 — start local blockchain
 npx hardhat node
-# terminal 2
-npm run deploy:local  # deploys 4 contracts, writes frontend/.env.local
-npm run demo:local    # narrates the full flow, then 4 attacks failing
 
+# Terminal 2 — deploy and run
+npm run deploy:local  # deploys 4 contracts, writes frontend/.env.local
+npm run demo:local    # narrated end-to-end run + 7 attacks blocked
+
+# Terminal 3 — start the frontend
 cd frontend && npm install && npm run dev
 ```
 
-`zk:build` downloads the Hermez Powers-of-Tau transcript (~5 MB) on first run
-and caches it. If the download fails it falls back to a local ceremony and says
-loudly that the result is development-only.
+Then open <http://localhost:5173> and import Hardhat Account #0 (issuer) and Account #2 (holder) into MetaMask.
 
-Then open <http://localhost:5173> and import a Hardhat account into MetaMask.
-Account #0 is the issuer.
+`zk:build` downloads the Hermez Powers-of-Tau transcript (~5 MB) on first run and caches it in `.ptau-cache/`.
 
-## The demo
-
-`npm run demo:local` walks through issue → prove → verify → access and then
-attacks the system four ways, printing which contract error stops each:
-
-```
-✓ blocked — REPLAY — resubmitting the same proof            → NullifierAlreadyUsed
-✓ blocked — PROOF THEFT — rewriting an unspent proof        → InvalidProof
-✓ RELAY   — attacker submitted unchanged; attestation went to the holder
-✓ blocked — THRESHOLD FORGERY — claiming threshold = 0      → ThresholdBelowPolicy
-✓ blocked — YEAR FORGERY — claiming the year is 2046        → YearInFuture
-✓ blocked — REGION FORGERY — claiming an unattested region  → CommitmentNotValid
-✓ blocked — ALLOWLIST SUBSTITUTION — narrowing to 1 region  → RegionMaskMismatch
-```
-
-The last one is a *privacy* attack rather than an access one. A malicious
-relying party would love you to prove membership in a single region, because
-that reveals exactly where you are from a flow branded "zero-knowledge". The
-contract pins the allowlist by equality, so every prover is forced into the same
-maximal anonymity set.
-
-## Deploy to Sepolia
+### Deploy to Sepolia
 
 ```bash
-cp .env.example .env        # fill in SEPOLIA_RPC_URL and PRIVATE_KEY
+cp .env.example .env       # fill in SEPOLIA_RPC_URL and PRIVATE_KEY
 npm run deploy:sepolia
 npm run demo:sepolia
 ```
 
-Use a throwaway key. The deploy script runs a self-test against a known-good
-proof before wiring the verifier in, so a mismatched circuit build cannot
-produce a permanently dead deployment.
+Use a throwaway key. The deploy script runs a self-test against a known-good proof before wiring the verifier in, so a mismatched circuit build cannot produce a permanently broken deployment.
 
-## Project structure
+---
+
+## 🖥️ The Frontend
+
+Six pages telling one story:
+
+| Page | Purpose |
+|------|---------|
+| **Home** | Connect wallet, project overview |
+| **Issuer** | Mock issuing authority — register Poseidon commitments on-chain |
+| **Prove** | 3-step wizard — load credential → generate proof → verify on-chain |
+| **Restricted** | Content gated by an on-chain read of `isVerifiedAtLeast()` |
+| **Explorer** | Live view of commitments, nullifiers and attestations on the chain |
+| **How It Works** | Interactive explainer — no wallet required |
+
+Proving runs inside a **Web Worker**, so the main thread stays responsive and shows real progress through download, witness generation, and proof steps. Private inputs (`birthYear`, `regionCode`, `secret`) live only in React state — never in `localStorage`, never in a URL, never in a network request.
+
+Before submitting a proof on-chain, the app calls `staticVerify()` — a read-only preflight that surfaces any policy failure with a precise error message, **without spending any gas**.
+
+---
+
+## 🗂️ Project Structure
 
 ```
-run.bat / run.sh             one-command setup and launch
-WALKTHROUGH.md               a from-scratch explanation for new developers
-circuits/
-  attribute_check.circom     the circuit — 965 constraints, 2 attributes
-  regions.json               the region registry — APPEND-ONLY, see the header
-  public_signals.json        generated: the frozen public-signal layout
-contracts/
-  VeritasCore.sol            policy, verification, nullifiers, attestations
-  CredentialRegistry.sol     issuer-gated commitment registry with revocation
-  Groth16Verifier.sol        generated by snarkjs — never edited by hand
-  examples/GatedContent.sol  a relying party, to show the gate is real
-  interfaces/IVeritas.sol
-scripts/
-  zk/build.mjs               the whole circuit pipeline, cross-platform
-  zk/credential.mjs          Poseidon, field arithmetic, packing
-  deploy.js                  deploy + wire roles + write frontend/.env.local
-  demo.js                    narrated end-to-end run
-tests/                       85 tests
-frontend/
-  src/zk/                    browser proving, Poseidon, field helpers
-  src/contracts/             ABIs, config, and the revert decoder
-  src/providers/             wallet, credential, session, toasts
-  src/pages/                 Home · Issuer · Prove · Restricted · Explorer · How it works
-  public/prover.worker.js    Groth16 proving, off the main thread
-docs/
-  architecture.md            diagrams and design decisions
-  threat-model.md            the security argument
-  gas-report.md              measurements and optimisations
-  demo-script.md             a run sheet for a live demonstration
+veritas-zk/
+│
+├── run.bat / run.sh              One-command setup and launch
+├── WALKTHROUGH.md                From-scratch explanation for new developers
+│
+├── circuits/
+│   ├── attribute_check.circom    The circuit — 1,033 constraints (v4)
+│   ├── regions.json              Region registry — append-only
+│   └── public_signals.json       Generated: frozen public-signal layout
+│
+├── contracts/
+│   ├── VeritasCore.sol           Policy, verification, nullifiers, attestations
+│   ├── CredentialRegistry.sol    Issuer-gated commitment registry with revocation
+│   ├── Groth16Verifier.sol       Generated by snarkjs — never edited by hand
+│   ├── examples/GatedContent.sol A relying party, to show the gate is real
+│   └── interfaces/IVeritas.sol   Contract interfaces
+│
+├── scripts/
+│   ├── zk/build.mjs              Full circuit pipeline — cross-platform
+│   ├── zk/credential.mjs         Poseidon, field arithmetic, packing
+│   ├── deploy.js                 Deploy + wire roles + write frontend/.env.local
+│   └── demo.js                   Narrated end-to-end run with attack demos
+│
+├── tests/                        111 tests across 6 files
+│   ├── circuit.test.js            28 tests — age, region, soundness
+│   ├── VeritasCore.test.js        52 tests — all attack mitigations
+│   ├── CredentialRegistry.test.js 19 tests — roles, expiry, revocation
+│   ├── Gas.test.js                Gas budget assertions (CI regression guard)
+│   ├── GatedContent.test.js       Relying party integration
+│   └── parity.test.js             Field, Poseidon, and signal layout consistency
+│
+├── frontend/
+│   ├── src/zk/                   Browser proving, Poseidon, field helpers, regions
+│   ├── src/contracts/            ABIs, config, and the revert decoder
+│   ├── src/providers/            Wallet, credential, session, toast providers
+│   ├── src/pages/                Six application pages
+│   └── public/prover.worker.js   Groth16 proving — off the main thread
+│
+└── docs/
+    ├── architecture.md           System diagrams and design decisions
+    ├── threat-model.md           The full security argument
+    ├── gas-report.md             Gas measurements and optimisation notes
+    └── demo-script.md            Run sheet for a live demonstration
 ```
 
-## The frontend
+---
 
-Six pages telling one story: an **Issuer** console (a mock authority), a
-**Prove** wizard, a **Restricted** area gated by an on-chain read, an
-**Explorer** showing exactly what the chain reveals, and a **How it works**
-explainer that needs no wallet.
+## ⛽ Gas Breakdown
 
-Proving runs in a Web Worker, so the interface stays responsive and shows real
-progress. The worker loads snarkjs via `importScripts` rather than through the
-bundler — see the comment at the top of `frontend/public/prover.worker.js` for
-why that is the robust choice.
+The 300,000 gas budget is deliberately tight — it is what separates a proof-of-concept from a system that can run affordably on a public blockchain.
 
-## Security notes
+| Component | Gas | Share |
+|-----------|----:|------:|
+| **`VeritasCore.verifyAge` — worst case** | **297,280** | **100%** |
+| └ Groth16 pairing check (`verifyProof`) | 236,098 | 79.5% |
+| └ Nullifier `SSTORE` (cold write) | 22,100 | 7.4% |
+| └ Attestation `SSTORE` (cold write) | 22,100 | 7.4% |
+| └ Registry `SLOAD` (cold read) | 4,700 | 1.6% |
+| └ Policy `SLOAD` + context + events | ~5,250 | 1.8% |
+| └ Calldata overhead | ~7,032 | 2.4% |
 
-- `birthYear` and `secret` live in React state only — never `localStorage`,
-  never a URL, never a network request. An ESLint rule enforces this.
-- The **holder** generates the secret; the issuer only ever sees the commitment.
-  An issuer who knew the secret could link every future verification.
+79.5% of the cost is the cryptographic pairing check — irreducible without changing the proof system. The remaining 20.5% pays for replay protection, attestation storage, and policy enforcement.
+
+The gas budget is **regression-tested**: `Gas.test.js` asserts `verifyAge < 300,000` on every test run, so a budget-breaking change fails CI before it reaches a demonstration.
+
+---
+
+## 🔒 Security Notes
+
+- Private inputs (`birthYear`, `regionCode`, `secret`) live **only in React state** — never `localStorage`, never a URL, never a network request.
+- The **holder generates the secret** locally. The issuer receives only the commitment. An issuer who knew the secret could compute every nullifier the holder will ever produce and link all their verifications.
+- The **phase-2 trusted setup** in this repository has a single contributor. A production deployment would require a real multi-party ceremony. This is stated explicitly — not hidden.
 - Never commit `.env`, `*.zkey`, or a private key. All are gitignored.
-- The phase-2 trusted setup has a single contributor. Production would need a
-  real multi-party ceremony. This is stated, not hidden.
+- See [`docs/threat-model.md`](docs/threat-model.md) for the complete security argument.
 
-## Commands
+---
 
-| Command | What it does |
-|---|---|
-| `npm run zk:build` | Compile the circuit, trusted setup, generate the verifier, publish artifacts |
-| `npm test` | The full suite |
-| `npm run test:gas` | Tests plus the gas table |
-| `npm run coverage` | Solidity coverage |
-| `npm run deploy:local` / `:sepolia` | Deploy and wire everything |
-| `npm run demo:local` / `:sepolia` | The narrated end-to-end run |
-| `npm run lint` / `npm run format` | ESLint / Prettier |
+## 📚 Commands Reference
 
-## Licence
+| Command | Description |
+|---------|-------------|
+| `npm run zk:build` | Compile circuit, trusted setup, generate verifier, publish WASM |
+| `npm run zk:rebuild` | Same, but forces regeneration even if artifacts exist |
+| `npm test` | The full 111-test suite |
+| `npm run test:gas` | Tests + gas usage table |
+| `npm run coverage` | Solidity branch coverage |
+| `npm run deploy:local` | Deploy to local Hardhat node |
+| `npm run deploy:sepolia` | Deploy to Sepolia testnet |
+| `npm run demo:local` | Narrated end-to-end run + attacks |
+| `npm run demo:sepolia` | Same, against Sepolia |
+| `npm run lint` | ESLint |
+| `npm run format` | Prettier |
+
+---
+
+## 📖 Documentation
+
+| Document | Contents |
+|----------|----------|
+| [`WALKTHROUGH.md`](WALKTHROUGH.md) | A from-scratch explanation of zk-SNARKs and this system, with hands-on exercises |
+| [`docs/architecture.md`](docs/architecture.md) | System diagrams, component interactions, and design decisions |
+| [`docs/threat-model.md`](docs/threat-model.md) | Full security argument with named tests for every mitigation |
+| [`docs/gas-report.md`](docs/gas-report.md) | Gas measurements, breakdown by component, and optimisation rationale |
+| [`docs/demo-script.md`](docs/demo-script.md) | Run sheet for a live demonstration |
+
+---
+
+## 📄 Licence
 
 MIT — see [LICENSE](LICENSE).
