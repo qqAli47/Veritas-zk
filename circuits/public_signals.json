@@ -1,0 +1,26 @@
+{
+  "circuit": "attribute_check",
+  "nPublic": 4,
+  "order": [
+    "commitment",
+    "nullifier",
+    "context",
+    "packed"
+  ],
+  "index": {
+    "commitment": 0,
+    "nullifier": 1,
+    "context": 2,
+    "packed": 3
+  },
+  "stats": {
+    "nonLinearConstraints": 1033,
+    "linearConstraints": 697,
+    "publicInputs": 2,
+    "publicOutputs": 2,
+    "privateInputs": 3,
+    "wires": 1725
+  },
+  "r1csSha256": "a99e3d4f13861b7a49a542aee0b95b4dffcba0f9011508399a80b1167fb4ebd2",
+  "generatedAt": "2026-09-05T14:21:32.092Z"
+}

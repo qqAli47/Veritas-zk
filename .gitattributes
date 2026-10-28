@@ -1,0 +1,26 @@
+# Normalise line endings so the repo works on Windows, macOS and Linux.
+* text=auto
+
+# Shell scripts MUST keep LF. With CRLF, bash fails with the notoriously
+# unhelpful "bad interpreter: /bin/bash^M".
+*.sh    text eol=lf
+
+# Batch files MUST keep CRLF. Some Windows cmd versions mis-parse LF-only
+# .bat files, particularly around multi-line blocks and labels.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Toolchain files that are parsed by cross-platform tools.
+*.circom  text eol=lf
+*.sol     text eol=lf
+*.mjs     text eol=lf
+
+# Binary artifacts - never touch these.
+*.wasm  binary
+*.zkey  binary
+*.ptau  binary
+*.r1cs  binary
+*.wtns  binary
+*.png   binary
+*.jpg   binary
+*.mp4   binary

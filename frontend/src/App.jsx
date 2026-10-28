@@ -1,27 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import HomePage from './pages/HomePage.jsx';
-import ProvePage from './pages/ProvePage.jsx';
-import RestrictedPage from './pages/RestrictedPage.jsx';
-import { useWallet } from './hooks/useWallet.js';
-import { getRoute } from './utils/router.js';
+import { RouterProvider } from 'react-router-dom';
+import { router } from './routes.jsx';
+import { WalletProvider } from './providers/WalletProvider.jsx';
+import { CredentialProvider } from './providers/CredentialProvider.jsx';
+import { SessionProvider } from './providers/SessionProvider.jsx';
+import { ToastProvider } from './providers/ToastProvider.jsx';
 
-function App() {
-  const wallet = useWallet();
-  const [route, setRoute] = useState(getRoute(window.location.hash));
-  const [routeState, setRouteState] = useState(window.__routeState || null);
-
-  useEffect(() => {
-    const handleHashChange = () => {
-      setRoute(getRoute(window.location.hash));
-      setRouteState(window.__routeState || null);
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
-  if (route === 'prove') return <ProvePage wallet={wallet} />;
-  if (route === 'restricted') return <RestrictedPage wallet={wallet} locationState={routeState} />;
-  return <HomePage wallet={wallet} />;
+export default function App() {
+  return (
+    <ToastProvider>
+      <WalletProvider>
+        <CredentialProvider>
+          <SessionProvider>
+            <RouterProvider router={router} />
+          </SessionProvider>
+        </CredentialProvider>
+      </WalletProvider>
+    </ToastProvider>
+  );
 }
-
-export default App;

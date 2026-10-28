@@ -1,0 +1,83 @@
+{
+  "root": true,
+  "env": { "es2022": true, "node": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
+  "extends": ["eslint:recommended", "prettier"],
+  "ignorePatterns": [
+    "node_modules/",
+    "artifacts/",
+    "cache/",
+    "build/",
+    "coverage/",
+    "deployments/",
+    "frontend/dist/",
+    "frontend/public/zk/",
+    "contracts/Groth16Verifier.sol",
+    "**/*.generated.json"
+  ],
+  "rules": {
+    "no-console": "off",
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }]
+  },
+  "overrides": [
+    {
+      "files": ["scripts/**/*.mjs"],
+      "parserOptions": { "sourceType": "module" }
+    },
+    {
+      "files": ["tests/**/*.js"],
+      "env": { "mocha": true },
+      "globals": { "ethers": "readonly" }
+    },
+    {
+      "files": ["frontend/src/**/*.{js,jsx}"],
+      "env": { "browser": true, "node": false },
+      "parserOptions": { "sourceType": "module", "ecmaFeatures": { "jsx": true } },
+      "settings": { "react": { "version": "detect" } },
+      "plugins": ["react", "react-hooks", "jsx-a11y"],
+      "extends": [
+        "plugin:react/recommended",
+        "plugin:react/jsx-runtime",
+        "plugin:react-hooks/recommended",
+        "plugin:jsx-a11y/recommended",
+        "prettier"
+      ],
+      "rules": {
+        "no-console": ["warn", { "allow": ["warn", "error", "debug"] }],
+        "react/prop-types": "off",
+
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "__routeState",
+            "message": "Navigation state belongs in the router or a provider, not on window."
+          }
+        ],
+
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "localStorage",
+            "property": "setItem",
+            "message": "Never persist credential secrets. Credentials live in React state only — see CredentialProvider."
+          },
+          {
+            "object": "sessionStorage",
+            "property": "setItem",
+            "message": "Never persist credential secrets. Credentials live in React state only — see CredentialProvider."
+          }
+        ]
+      }
+    },
+    {
+      "files": ["frontend/public/*.worker.js"],
+      "env": { "worker": true, "browser": true, "node": false },
+      "parserOptions": { "sourceType": "script" },
+      "globals": { "importScripts": "readonly", "snarkjs": "readonly" }
+    },
+    {
+      "files": ["frontend/vite.config.js"],
+      "parserOptions": { "sourceType": "module" }
+    }
+  ]
+}

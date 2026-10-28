@@ -1,0 +1,222 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Veritas — form controls
+   ═══════════════════════════════════════════════════════════════════
+
+   Native <select> and <input type="file"> are the two controls a dark
+   theme cannot simply recolour: the browser draws the dropdown arrow
+   and the "Choose File" button itself, in the OS palette. Both are
+   rebuilt here so they belong to the design system rather than sitting
+   awkwardly beside it.
+
+   `color-scheme: dark` in App.css handles the parts we genuinely cannot
+   style — the OS-drawn popup list, spinners and scrollbars.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Select ─────────────────────────────────────────────────────── */
+
+.select-wrap {
+  position: relative;
+  display: block;
+}
+
+/* The chevron. Drawn by us because `appearance: none` removes the
+   browser's, and the browser's cannot be recoloured. */
+.select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: -0.35rem;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(45deg);
+  pointer-events: none; /* clicks must reach the select underneath */
+  transition: border-color var(--transition-fast);
+}
+
+.select-wrap:hover::after {
+  border-color: var(--purple-light);
+}
+
+.select-wrap select {
+  /* Match the text inputs exactly — same padding, radius, border, focus. */
+  width: 100%;
+  padding: 0.75rem 2.5rem 0.75rem 1rem; /* right padding clears the chevron */
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all var(--transition-base);
+
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.select-wrap select:hover:not(:disabled) {
+  border-color: var(--purple-dark);
+}
+
+.select-wrap select:focus {
+  outline: none;
+  border-color: var(--purple);
+  box-shadow:
+    0 0 0 3px rgba(124, 58, 237, 0.12),
+    0 0 16px rgba(124, 58, 237, 0.08);
+}
+
+.select-wrap select:disabled {
+  cursor: not-allowed;
+  background: rgba(10, 10, 16, 0.6);
+  color: var(--text-dim);
+}
+
+.select-wrap:has(select:disabled)::after {
+  border-color: var(--text-dim);
+}
+
+/* The popup list is OS-drawn. These are honoured on Windows and most
+   Linux builds; macOS ignores them, which is why color-scheme matters. */
+.select-wrap select option,
+.select-wrap select optgroup {
+  background: var(--surface-elevated);
+  color: var(--text);
+}
+
+.select-wrap select optgroup {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--purple-light);
+}
+
+/* ─── Dropzone (file input) ──────────────────────────────────────── */
+
+.dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  cursor: pointer;
+
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  transition: all var(--transition-base);
+}
+
+.dropzone:hover:not(.is-disabled) {
+  border-color: var(--purple);
+  background: rgba(124, 58, 237, 0.05);
+}
+
+.dropzone:focus-visible {
+  outline: none;
+  border-color: var(--purple);
+  box-shadow: var(--focus-ring);
+}
+
+.dropzone.is-dragging {
+  border-color: var(--purple-light);
+  border-style: solid;
+  background: rgba(124, 58, 237, 0.12);
+  transform: scale(1.01);
+}
+
+.dropzone.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/*
+ * The real input stays in the DOM and in the tab order — only its paint is
+ * suppressed. `display: none` would remove it from the accessibility tree
+ * and break keyboard access, which is the usual bug in custom uploaders.
+ */
+.dropzone-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dropzone-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--purple-light);
+}
+
+.dropzone-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.dropzone-hint {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  max-width: 46ch;
+  line-height: 1.5;
+}
+
+/* ─── Shared field furniture ─────────────────────────────────────── */
+
+.field-hint {
+  margin-top: var(--space-2);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/*
+ * Number spinners are tiny, hard to hit, and never what anyone wants for a
+ * birth year. `color-scheme: dark` already stops them looking pasted on;
+ * removing them entirely is cleaner still. The field stays type="number"
+ * so mobile keyboards remain numeric and validation still applies.
+ */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Secrets and hashes are long opaque strings — proportional type makes them
+   harder to compare by eye and easier to mis-transcribe. */
+input[type='password'],
+input#secret,
+input#mSecret {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
+/* Chromium paints autofilled fields a hard blue-white. There is no property
+   to override it, but the inset shadow trick repaints the background and the
+   long transition defers the fill past any realistic page view. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset;
+  transition: background-color 100000s ease-in-out 0s;
+}

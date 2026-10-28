@@ -1,0 +1,12 @@
+node_modules/
+artifacts/
+cache/
+build/
+coverage/
+deployments/
+frontend/dist/
+frontend/public/zk/
+contracts/Groth16Verifier.sol
+package-lock.json
+*.generated.json
+docs/planning/

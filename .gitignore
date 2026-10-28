@@ -181,3 +181,18 @@ cache/
 
 # Circuit build outputs
 build/
+
+# ── Veritas: build & deployment outputs ─────────────────────────
+# Circuit build artifacts (regenerate with `npm run zk:build`)
+build/
+# Powers-of-Tau cache (large, regenerable)
+.ptau-cache/
+# Per-network deployed contract addresses
+deployments/
+# Circuit artifacts served to the browser (copied from build/)
+frontend/public/zk/
+# Local env overrides written by the deploy script
+frontend/.env.local
+# NOTE: docs/gas-report.txt is deliberately COMMITTED. It is the raw evidence
+# behind docs/gas-report.md, it is small, and a report that cites a file nobody
+# else can see is not much of a report.
